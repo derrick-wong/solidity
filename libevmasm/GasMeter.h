@@ -21,10 +21,13 @@
 
 #pragma once
 
-#include <ostream>
-#include <tuple>
 #include <libevmasm/ExpressionClasses.h>
 #include <libevmasm/AssemblyItem.h>
+
+#include <liblangutil/EVMVersion.h>
+
+#include <ostream>
+#include <tuple>
 
 namespace dev
 {
@@ -44,13 +47,25 @@ namespace GasCosts
 	static unsigned const tier5Gas = 10;
 	static unsigned const tier6Gas = 20;
 	static unsigned const tier7Gas = 0;
-	static unsigned const extCodeGas = 700;
-	static unsigned const balanceGas = 400;
+	inline unsigned extCodeGas(langutil::EVMVersion _evmVersion)
+	{
+		return _evmVersion >= langutil::EVMVersion::tangerineWhistle() ? 700 : 20;
+	}
+	inline unsigned balanceGas(langutil::EVMVersion _evmVersion)
+	{
+		return _evmVersion >= langutil::EVMVersion::tangerineWhistle() ? 400 : 20;
+	}
 	static unsigned const expGas = 10;
-	static unsigned const expByteGas = 50;
+	inline unsigned expByteGas(langutil::EVMVersion _evmVersion)
+	{
+		return _evmVersion >= langutil::EVMVersion::spuriousDragon() ? 50 : 10;
+	}
 	static unsigned const keccak256Gas = 30;
 	static unsigned const keccak256WordGas = 6;
-	static unsigned const sloadGas = 200;
+	inline unsigned sloadGas(langutil::EVMVersion _evmVersion)
+	{
+		return _evmVersion >= langutil::EVMVersion::tangerineWhistle() ? 200 : 50;
+	}
 	static unsigned const sstoreSetGas = 20000;
 	static unsigned const sstoreResetGas = 5000;
 	static unsigned const sstoreRefundGas = 15000;
@@ -59,11 +74,17 @@ namespace GasCosts
 	static unsigned const logDataGas = 8;
 	static unsigned const logTopicGas = 375;
 	static unsigned const createGas = 32000;
-	static unsigned const callGas = 700;
+	inline unsigned callGas(langutil::EVMVersion _evmVersion)
+	{
+		return _evmVersion >= langutil::EVMVersion::tangerineWhistle() ? 700 : 40;
+	}
 	static unsigned const callStipend = 2300;
 	static unsigned const callValueTransferGas = 9000;
 	static unsigned const callNewAccountGas = 25000;
-	static unsigned const selfdestructGas = 5000;
+	inline unsigned selfdestructGas(langutil::EVMVersion _evmVersion)
+	{
+		return _evmVersion >= langutil::EVMVersion::tangerineWhistle() ? 5000 : 0;
+	}
 	static unsigned const selfdestructRefundGas = 24000;
 	static unsigned const memoryGas = 3;
 	static unsigned const quadCoeffDiv = 512;
@@ -91,17 +112,18 @@ public:
 		static GasConsumption infinite() { return GasConsumption(0, true); }
 
 		GasConsumption& operator+=(GasConsumption const& _other);
-		bool operator<(GasConsumption const& _other) const { return this->tuple() < _other.tuple(); }
-
-		std::tuple<bool const&, u256 const&> tuple() const { return std::tie(isInfinite, value); }
+		bool operator<(GasConsumption const& _other) const
+		{
+			return std::make_pair(isInfinite, value) < std::make_pair(_other.isInfinite, _other.value);
+		}
 
 		u256 value;
 		bool isInfinite;
 	};
 
 	/// Constructs a new gas meter given the current state.
-	explicit GasMeter(std::shared_ptr<KnownState> const& _state, u256 const& _largestMemoryAccess = 0):
-		m_state(_state), m_largestMemoryAccess(_largestMemoryAccess) {}
+	GasMeter(std::shared_ptr<KnownState> const& _state, langutil::EVMVersion _evmVersion, u256 const& _largestMemoryAccess = 0):
+		m_state(_state), m_evmVersion(_evmVersion), m_largestMemoryAccess(_largestMemoryAccess) {}
 
 	/// @returns an upper bound on the gas consumed by the given instruction and updates
 	/// the state.
@@ -110,7 +132,14 @@ public:
 
 	u256 const& largestMemoryAccess() const { return m_largestMemoryAccess; }
 
+	/// @returns gas costs for simple instructions with constant gas costs (that do not
+	/// change with EVM versions)
 	static unsigned runGas(Instruction _instruction);
+
+	/// @returns the gas cost of the supplied data, depending whether it is in creation code, or not.
+	/// In case of @a _inCreation, the data is only sent as a transaction and is not stored, whereas
+	/// otherwise code will be stored and have to pay "createDataGas" cost.
+	static u256 dataGas(bytes const& _data, bool _inCreation);
 
 private:
 	/// @returns _multiplier * (_value + 31) / 32, if _value is a known constant and infinite otherwise.
@@ -123,6 +152,7 @@ private:
 	GasConsumption memoryGas(int _stackPosOffset, int _stackPosSize);
 
 	std::shared_ptr<KnownState> m_state;
+	langutil::EVMVersion m_evmVersion;
 	/// Largest point where memory was accessed since the creation of this object.
 	u256 m_largestMemoryAccess;
 };

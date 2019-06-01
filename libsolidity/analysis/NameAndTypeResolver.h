@@ -1,18 +1,18 @@
 /*
-    This file is part of solidity.
+	This file is part of solidity.
 
-    solidity is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+	solidity is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
 
-    solidity is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	solidity is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with solidity.  If not, see <http://www.gnu.org/licenses/>.
+	You should have received a copy of the GNU General Public License
+	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
 */
 /**
  * @author Christian <c@ethdev.com>
@@ -22,20 +22,26 @@
 
 #pragma once
 
-#include <map>
-#include <list>
-#include <boost/noncopyable.hpp>
 #include <libsolidity/analysis/DeclarationContainer.h>
+#include <libsolidity/analysis/GlobalContext.h>
 #include <libsolidity/analysis/ReferencesResolver.h>
-#include <libsolidity/ast/ASTVisitor.h>
 #include <libsolidity/ast/ASTAnnotations.h>
+#include <libsolidity/ast/ASTVisitor.h>
+
+#include <boost/noncopyable.hpp>
+
+#include <list>
+#include <map>
+
+namespace langutil
+{
+class ErrorReporter;
+}
 
 namespace dev
 {
 namespace solidity
 {
-
-class ErrorReporter;
 
 /**
  * Resolves name references, typenames and sets the (explicitly given) types for all variable
@@ -48,15 +54,15 @@ public:
 	/// @param _scopes mapping of scopes to be used (usually default constructed), these
 	/// are filled during the lifetime of this object.
 	NameAndTypeResolver(
-		std::vector<Declaration const*> const& _globals,
+		GlobalContext& _globalContext,
 		std::map<ASTNode const*, std::shared_ptr<DeclarationContainer>>& _scopes,
-		ErrorReporter& _errorReporter
+		langutil::ErrorReporter& _errorReporter
 	);
 	/// Registers all declarations found in the AST node, usually a source unit.
 	/// @returns false in case of error.
 	/// @param _currentScope should be nullptr but can be used to inject new declarations into
 	/// existing scopes, used by the snippets feature.
-	bool registerDeclarations(ASTNode& _sourceUnit, ASTNode const* _currentScope = nullptr);
+	bool registerDeclarations(SourceUnit& _sourceUnit, ASTNode const* _currentScope = nullptr);
 	/// Applies the effect of import directives.
 	bool performImports(SourceUnit& _sourceUnit, std::map<std::string, SourceUnit const*> const& _sourceUnits);
 	/// Resolves all names and types referenced from the given AST Node.
@@ -69,20 +75,24 @@ public:
 	/// that create their own scope.
 	/// @returns false in case of error.
 	bool updateDeclaration(Declaration const& _declaration);
+	/// Activates a previously inactive (invisible) variable. To be used in C99 scoping for
+	/// VariableDeclarationStatements.
+	void activateVariable(std::string const& _name);
 
 	/// Resolves the given @a _name inside the scope @a _scope. If @a _scope is omitted,
 	/// the global scope is used (i.e. the one containing only the pre-defined global variables).
 	/// @returns a pointer to the declaration on success or nullptr on failure.
+	/// SHOULD only be used for testing.
 	std::vector<Declaration const*> resolveName(ASTString const& _name, ASTNode const* _scope = nullptr) const;
 
-	/// Resolves a name in the "current" scope. Should only be called during the initial
-	/// resolving phase.
-	std::vector<Declaration const*> nameFromCurrentScope(ASTString const& _name, bool _recursive = true) const;
+	/// Resolves a name in the "current" scope, but also searches parent scopes.
+	/// Should only be called during the initial resolving phase.
+	std::vector<Declaration const*> nameFromCurrentScope(ASTString const& _name, bool _includeInvisibles = false) const;
 
-	/// Resolves a path starting from the "current" scope. Should only be called during the initial
-	/// resolving phase.
+	/// Resolves a path starting from the "current" scope, but also searches parent scopes.
+	/// Should only be called during the initial resolving phase.
 	/// @note Returns a null pointer if any component in the path was not unique or not found.
-	Declaration const* pathFromCurrentScope(std::vector<ASTString> const& _path, bool _recursive = true) const;
+	Declaration const* pathFromCurrentScope(std::vector<ASTString> const& _path) const;
 
 	/// returns the vector of declarations without repetitions
 	std::vector<Declaration const*> cleanedDeclarations(
@@ -92,6 +102,12 @@ public:
 
 	/// Generate and store warnings about variables that are named like instructions.
 	void warnVariablesNamedLikeInstructions();
+
+	/// @returns a list of similar identifiers in the current and enclosing scopes. May return empty string if no suggestions.
+	std::string similarNameSuggestions(ASTString const& _name) const;
+
+	/// Sets the current scope.
+	void setScope(ASTNode const* _node);
 
 private:
 	/// Internal version of @a resolveNamesAndTypes (called from there) throws exceptions on fatal errors.
@@ -115,7 +131,8 @@ private:
 	std::map<ASTNode const*, std::shared_ptr<DeclarationContainer>>& m_scopes;
 
 	DeclarationContainer* m_currentScope = nullptr;
-	ErrorReporter& m_errorReporter;
+	langutil::ErrorReporter& m_errorReporter;
+	GlobalContext& m_globalContext;
 };
 
 /**
@@ -132,14 +149,25 @@ public:
 	DeclarationRegistrationHelper(
 		std::map<ASTNode const*, std::shared_ptr<DeclarationContainer>>& _scopes,
 		ASTNode& _astRoot,
-		ErrorReporter& _errorReporter,
+		langutil::ErrorReporter& _errorReporter,
+		GlobalContext& _globalContext,
 		ASTNode const* _currentScope = nullptr
+	);
+
+	static bool registerDeclaration(
+		DeclarationContainer& _container,
+		Declaration const& _declaration,
+		std::string const* _name,
+		langutil::SourceLocation const* _errorLocation,
+		bool _warnOnShadow,
+		bool _inactive,
+		langutil::ErrorReporter& _errorReporter
 	);
 
 private:
 	bool visit(SourceUnit& _sourceUnit) override;
 	void endVisit(SourceUnit& _sourceUnit) override;
-	bool visit(ImportDirective& _declaration) override;
+	bool visit(ImportDirective& _import) override;
 	bool visit(ContractDefinition& _contract) override;
 	void endVisit(ContractDefinition& _contract) override;
 	bool visit(StructDefinition& _struct) override;
@@ -151,14 +179,22 @@ private:
 	void endVisit(FunctionDefinition& _function) override;
 	bool visit(ModifierDefinition& _modifier) override;
 	void endVisit(ModifierDefinition& _modifier) override;
+	bool visit(FunctionTypeName& _funTypeName) override;
+	void endVisit(FunctionTypeName& _funTypeName) override;
+	bool visit(Block& _block) override;
+	void endVisit(Block& _block) override;
+	bool visit(ForStatement& _forLoop) override;
+	void endVisit(ForStatement& _forLoop) override;
 	void endVisit(VariableDeclarationStatement& _variableDeclarationStatement) override;
 	bool visit(VariableDeclaration& _declaration) override;
 	bool visit(EventDefinition& _event) override;
 	void endVisit(EventDefinition& _event) override;
 
-	void enterNewSubScope(Declaration const& _declaration);
+	void enterNewSubScope(ASTNode& _subScope);
 	void closeCurrentScope();
 	void registerDeclaration(Declaration& _declaration, bool _opensScope);
+
+	static bool isOverloadedFunction(Declaration const& _declaration1, Declaration const& _declaration2);
 
 	/// @returns the canonical name of the current scope.
 	std::string currentCanonicalName() const;
@@ -166,7 +202,8 @@ private:
 	std::map<ASTNode const*, std::shared_ptr<DeclarationContainer>>& m_scopes;
 	ASTNode const* m_currentScope = nullptr;
 	VariableScope* m_currentFunction = nullptr;
-	ErrorReporter& m_errorReporter;
+	langutil::ErrorReporter& m_errorReporter;
+	GlobalContext& m_globalContext;
 };
 
 }

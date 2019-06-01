@@ -34,6 +34,11 @@
 #include <libevmasm/SemanticInformation.h>
 #include <libevmasm/KnownState.h>
 
+namespace langutil
+{
+struct SourceLocation;
+}
+
 namespace dev
 {
 namespace eth
@@ -61,12 +66,13 @@ public:
 	using Id = ExpressionClasses::Id;
 	using StoreOperation = KnownState::StoreOperation;
 
-	CommonSubexpressionEliminator(KnownState const& _state): m_initialState(_state), m_state(_state) {}
+	explicit CommonSubexpressionEliminator(KnownState const& _state): m_initialState(_state), m_state(_state) {}
 
 	/// Feeds AssemblyItems into the eliminator and @returns the iterator pointing at the first
 	/// item that must be fed into a new instance of the eliminator.
+	/// @param _msizeImportant if false, do not consider modification of MSIZE a side-effect
 	template <class _AssemblyItemIterator>
-	_AssemblyItemIterator feedItems(_AssemblyItemIterator _iterator, _AssemblyItemIterator _end);
+	_AssemblyItemIterator feedItems(_AssemblyItemIterator _iterator, _AssemblyItemIterator _end, bool _msizeImportant);
 
 	/// @returns the resulting items after optimization.
 	AssemblyItems getOptimizedItems();
@@ -136,18 +142,18 @@ private:
 	bool removeStackTopIfPossible();
 
 	/// Appends a dup instruction to m_generatedItems to retrieve the element at the given stack position.
-	void appendDup(int _fromPosition, SourceLocation const& _location);
+	void appendDup(int _fromPosition, langutil::SourceLocation const& _location);
 	/// Appends a swap instruction to m_generatedItems to retrieve the element at the given stack position.
 	/// @note this might also remove the last item if it exactly the same swap instruction.
-	void appendOrRemoveSwap(int _fromPosition, SourceLocation const& _location);
+	void appendOrRemoveSwap(int _fromPosition, langutil::SourceLocation const& _location);
 	/// Appends the given assembly item.
 	void appendItem(AssemblyItem const& _item);
 
-	static const int c_invalidPosition = -0x7fffffff;
+	static int const c_invalidPosition = -0x7fffffff;
 
 	AssemblyItems m_generatedItems;
 	/// Current height of the stack relative to the start.
-	int m_stackHeight;
+	int m_stackHeight = 0;
 	/// If (b, a) is in m_requests then b is needed to compute a.
 	std::multimap<Id, Id> m_neededBy;
 	/// Current content of the stack.
@@ -155,7 +161,7 @@ private:
 	/// Current positions of equivalence classes, equal to the empty set if already deleted.
 	std::map<Id, std::set<int>> m_classPositions;
 
-	/// The actual eqivalence class items and how to compute them.
+	/// The actual equivalence class items and how to compute them.
 	ExpressionClasses& m_expressionClasses;
 	/// Keeps information about which storage or memory slots were written to by which operations.
 	/// The operations are sorted ascendingly by sequence number.
@@ -168,11 +174,12 @@ private:
 template <class _AssemblyItemIterator>
 _AssemblyItemIterator CommonSubexpressionEliminator::feedItems(
 	_AssemblyItemIterator _iterator,
-	_AssemblyItemIterator _end
+	_AssemblyItemIterator _end,
+	bool _msizeImportant
 )
 {
 	assertThrow(!m_breakingItem, OptimizerException, "Invalid use of CommonSubexpressionEliminator.");
-	for (; _iterator != _end && !SemanticInformation::breaksCSEAnalysisBlock(*_iterator); ++_iterator)
+	for (; _iterator != _end && !SemanticInformation::breaksCSEAnalysisBlock(*_iterator, _msizeImportant); ++_iterator)
 		feedItem(*_iterator);
 	if (_iterator != _end)
 		m_breakingItem = &(*_iterator++);

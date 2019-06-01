@@ -1,18 +1,18 @@
 /*
-    This file is part of solidity.
+	This file is part of solidity.
 
-    solidity is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+	solidity is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
 
-    solidity is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	solidity is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with solidity.  If not, see <http://www.gnu.org/licenses/>.
+	You should have received a copy of the GNU General Public License
+	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
 */
 /**
  * @author Christian <c@ethdev.com>
@@ -94,7 +94,8 @@ void InheritanceSpecifier::accept(ASTVisitor& _visitor)
 	if (_visitor.visit(*this))
 	{
 		m_baseName->accept(_visitor);
-		listAccept(m_arguments, _visitor);
+		if (m_arguments)
+			listAccept(*m_arguments, _visitor);
 	}
 	_visitor.endVisit(*this);
 }
@@ -104,7 +105,8 @@ void InheritanceSpecifier::accept(ASTConstVisitor& _visitor) const
 	if (_visitor.visit(*this))
 	{
 		m_baseName->accept(_visitor);
-		listAccept(m_arguments, _visitor);
+		if (m_arguments)
+			listAccept(*m_arguments, _visitor);
 	}
 	_visitor.endVisit(*this);
 }
@@ -262,7 +264,8 @@ void ModifierInvocation::accept(ASTVisitor& _visitor)
 	if (_visitor.visit(*this))
 	{
 		m_modifierName->accept(_visitor);
-		listAccept(m_arguments, _visitor);
+		if (m_arguments)
+			listAccept(*m_arguments, _visitor);
 	}
 	_visitor.endVisit(*this);
 }
@@ -272,7 +275,8 @@ void ModifierInvocation::accept(ASTConstVisitor& _visitor) const
 	if (_visitor.visit(*this))
 	{
 		m_modifierName->accept(_visitor);
-		listAccept(m_arguments, _visitor);
+		if (m_arguments)
+			listAccept(*m_arguments, _visitor);
 	}
 	_visitor.endVisit(*this);
 }
@@ -288,18 +292,6 @@ void EventDefinition::accept(ASTConstVisitor& _visitor) const
 {
 	if (_visitor.visit(*this))
 		m_parameters->accept(_visitor);
-	_visitor.endVisit(*this);
-}
-
-void TypeName::accept(ASTVisitor& _visitor)
-{
-	_visitor.visit(*this);
-	_visitor.endVisit(*this);
-}
-
-void TypeName::accept(ASTConstVisitor& _visitor) const
-{
-	_visitor.visit(*this);
 	_visitor.endVisit(*this);
 }
 
@@ -550,6 +542,20 @@ void Throw::accept(ASTVisitor& _visitor)
 void Throw::accept(ASTConstVisitor& _visitor) const
 {
 	_visitor.visit(*this);
+	_visitor.endVisit(*this);
+}
+
+void EmitStatement::accept(ASTVisitor& _visitor)
+{
+	if (_visitor.visit(*this))
+		m_eventCall->accept(_visitor);
+	_visitor.endVisit(*this);
+}
+
+void EmitStatement::accept(ASTConstVisitor& _visitor) const
+{
+	if (_visitor.visit(*this))
+		m_eventCall->accept(_visitor);
 	_visitor.endVisit(*this);
 }
 

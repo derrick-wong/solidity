@@ -1,18 +1,14 @@
-cmake_policy(SET CMP0015 NEW)
-set(CMAKE_AUTOMOC OFF)
+set(sources
+	CodeFragment.cpp
+	CodeFragment.h
+	Compiler.cpp
+	Compiler.h
+	CompilerState.cpp
+	CompilerState.h
+	Exceptions.h
+	Parser.cpp
+	Parser.h
+)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DSTATICLIB")
-
-aux_source_directory(. SRC_LIST)
-
-set(EXECUTABLE lll)
-
-file(GLOB HEADERS "*.h")
-
-include_directories(BEFORE ..)
-add_library(${EXECUTABLE} ${SRC_LIST} ${HEADERS})
-
-eth_use(${EXECUTABLE} REQUIRED Solidity::solevmasm)
-#target_link_libraries(${EXECUTABLE} evmasm)
-
-install( TARGETS ${EXECUTABLE} RUNTIME DESTINATION bin ARCHIVE DESTINATION lib LIBRARY DESTINATION lib )
+add_library(lll ${sources})
+target_link_libraries(lll PUBLIC evmasm devcore)

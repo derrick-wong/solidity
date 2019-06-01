@@ -21,39 +21,34 @@
 
 #include <libdevcore/CommonData.h>
 #include <libdevcore/Exceptions.h>
-#include <libdevcore/SHA3.h>
+#include <libdevcore/Assertions.h>
+#include <libdevcore/Keccak256.h>
 
 #include <boost/algorithm/string.hpp>
 
 using namespace std;
 using namespace dev;
 
-std::string dev::escaped(std::string const& _s, bool _all)
+string dev::toHex(bytes const& _data, HexPrefix _prefix, HexCase _case)
 {
-	static const map<char, char> prettyEscapes{{'\r', 'r'}, {'\n', 'n'}, {'\t', 't'}, {'\v', 'v'}};
-	std::string ret;
-	ret.reserve(_s.size() + 2);
-	ret.push_back('"');
-	for (auto i: _s)
-		if (i == '"' && !_all)
-			ret += "\\\"";
-		else if (i == '\\' && !_all)
-			ret += "\\\\";
-		else if (prettyEscapes.count(i) && !_all)
-		{
-			ret += '\\';
-			ret += prettyEscapes.find(i)->second;
-		}
-		else if (i < ' ' || _all)
-		{
-			ret += "\\x";
-			ret.push_back("0123456789abcdef"[(uint8_t)i / 16]);
-			ret.push_back("0123456789abcdef"[(uint8_t)i % 16]);
-		}
-		else
-			ret.push_back(i);
-	ret.push_back('"');
-	return ret;
+	std::ostringstream ret;
+	if (_prefix == HexPrefix::Add)
+		ret << "0x";
+
+	int rix = _data.size() - 1;
+	for (uint8_t c: _data)
+	{
+		// switch hex case every four hexchars
+		auto hexcase = std::nouppercase;
+		if (_case == HexCase::Upper)
+			hexcase = std::uppercase;
+		else if (_case == HexCase::Mixed)
+			hexcase = (rix-- & 2) == 0 ? std::nouppercase : std::uppercase;
+
+		ret << std::hex << hexcase << std::setfill('0') << std::setw(2) << size_t(c);
+	}
+
+	return ret.str();
 }
 
 int dev::fromHex(char _i, WhenError _throw)
@@ -91,7 +86,7 @@ bytes dev::fromHex(std::string const& _s, WhenError _throw)
 		int h = fromHex(_s[i], WhenError::DontThrow);
 		int l = fromHex(_s[i + 1], WhenError::DontThrow);
 		if (h != -1 && l != -1)
-			ret.push_back((byte)(h * 16 + l));
+			ret.push_back((uint8_t)(h * 16 + l));
 		else if (_throw == WhenError::Throw)
 			BOOST_THROW_EXCEPTION(BadHexCharacter());
 		else
@@ -103,31 +98,60 @@ bytes dev::fromHex(std::string const& _s, WhenError _throw)
 
 bool dev::passesAddressChecksum(string const& _str, bool _strict)
 {
-	string s = _str.substr(0, 2) == "0x" ? _str.substr(2) : _str;
+	string s = _str.substr(0, 2) == "0x" ? _str : "0x" + _str;
 
-	if (s.length() != 40)
+	if (s.length() != 42)
 		return false;
 
 	if (!_strict && (
-		_str.find_first_of("abcdef") == string::npos ||
-		_str.find_first_of("ABCDEF") == string::npos
+		s.find_first_of("abcdef") == string::npos ||
+		s.find_first_of("ABCDEF") == string::npos
 	))
 		return true;
 
+	return s == dev::getChecksummedAddress(s);
+}
+
+string dev::getChecksummedAddress(string const& _addr)
+{
+	string s = _addr.substr(0, 2) == "0x" ? _addr.substr(2) : _addr;
+	assertThrow(s.length() == 40, InvalidAddress, "");
+	assertThrow(s.find_first_not_of("0123456789abcdefABCDEF") == string::npos, InvalidAddress, "");
+
 	h256 hash = keccak256(boost::algorithm::to_lower_copy(s, std::locale::classic()));
+
+	string ret = "0x";
 	for (size_t i = 0; i < 40; ++i)
 	{
 		char addressCharacter = s[i];
-		bool lowerCase;
-		if ('a' <= addressCharacter && addressCharacter <= 'f')
-			lowerCase = true;
-		else if ('A' <= addressCharacter && addressCharacter <= 'F')
-			lowerCase = false;
-		else
-			continue;
 		unsigned nibble = (unsigned(hash[i / 2]) >> (4 * (1 - (i % 2)))) & 0xf;
-		if ((nibble >= 8) == lowerCase)
-			return false;
+		if (nibble >= 8)
+			ret += toupper(addressCharacter);
+		else
+			ret += tolower(addressCharacter);
 	}
+	return ret;
+}
+
+bool dev::isValidHex(string const& _string)
+{
+	if (_string.substr(0, 2) != "0x")
+		return false;
+	if (_string.find_first_not_of("0123456789abcdefABCDEF", 2) != string::npos)
+		return false;
+	return true;
+}
+
+bool dev::isValidDecimal(string const& _string)
+{
+	if (_string.empty())
+		return false;
+	if (_string == "0")
+		return true;
+	// No leading zeros
+	if (_string.front() == '0')
+		return false;
+	if (_string.find_first_not_of("0123456789") != string::npos)
+		return false;
 	return true;
 }

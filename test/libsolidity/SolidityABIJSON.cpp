@@ -20,13 +20,13 @@
  * Unit tests for the solidity compiler JSON Interface output.
  */
 
-#include "../TestHelper.h"
+#include <test/Options.h>
 #include <libsolidity/interface/CompilerStack.h>
 
 #include <libdevcore/Exceptions.h>
 #include <libdevcore/SwarmHash.h>
 
-#include <json/json.h>
+#include <libdevcore/JSON.h>
 
 namespace dev
 {
@@ -38,15 +38,17 @@ namespace test
 class JSONInterfaceChecker
 {
 public:
-	JSONInterfaceChecker(): m_compilerStack() {}
-
-	void checkInterface(std::string const& _code, std::string const& _expectedInterfaceString)
+	void checkInterface(std::string const& _code, std::string const& _contractName, std::string const& _expectedInterfaceString)
 	{
-		ETH_TEST_REQUIRE_NO_THROW(m_compilerStack.parseAndAnalyze("pragma solidity >=0.0;\n" + _code), "Parsing contract failed");
+		m_compilerStack.reset();
+		m_compilerStack.setSources({{"", "pragma solidity >=0.0;\n" + _code}});
+		m_compilerStack.setEVMVersion(dev::test::Options::get().evmVersion());
+		m_compilerStack.setOptimiserSettings(dev::test::Options::get().optimize);
+		BOOST_REQUIRE_MESSAGE(m_compilerStack.parseAndAnalyze(), "Parsing contract failed");
 
-		Json::Value generatedInterface = m_compilerStack.contractABI("");
+		Json::Value generatedInterface = m_compilerStack.contractABI(_contractName);
 		Json::Value expectedInterface;
-		m_reader.parse(_expectedInterfaceString, expectedInterface);
+		BOOST_REQUIRE(jsonParseStrict(_expectedInterfaceString, expectedInterface));
 		BOOST_CHECK_MESSAGE(
 			expectedInterface == generatedInterface,
 			"Expected:\n" << expectedInterface.toStyledString() <<
@@ -56,7 +58,6 @@ public:
 
 protected:
 	CompilerStack m_compilerStack;
-	Json::Reader m_reader;
 };
 
 BOOST_FIXTURE_TEST_SUITE(SolidityABIJSON, JSONInterfaceChecker)
@@ -65,7 +66,7 @@ BOOST_AUTO_TEST_CASE(basic_test)
 {
 	char const* sourceCode = R"(
 		contract test {
-			function f(uint a) returns(uint d) { return a * 7; }
+			function f(uint a) public returns (uint d) { return a * 7; }
 		}
 	)";
 
@@ -74,6 +75,7 @@ BOOST_AUTO_TEST_CASE(basic_test)
 		"name": "f",
 		"constant": false,
 		"payable" : false,
+		"stateMutability": "nonpayable",
 		"type": "function",
 		"inputs": [
 		{
@@ -90,7 +92,7 @@ BOOST_AUTO_TEST_CASE(basic_test)
 	}
 	])";
 
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(empty_contract)
@@ -100,15 +102,15 @@ BOOST_AUTO_TEST_CASE(empty_contract)
 	)";
 	char const* interface = "[]";
 
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(multiple_methods)
 {
 	char const* sourceCode = R"(
 		contract test {
-			function f(uint a) returns(uint d) { return a * 7; }
-			function g(uint b) returns(uint e) { return b * 8; }
+			function f(uint a) public returns (uint d) { return a * 7; }
+			function g(uint b) public returns (uint e) { return b * 8; }
 		}
 	)";
 
@@ -117,6 +119,7 @@ BOOST_AUTO_TEST_CASE(multiple_methods)
 		"name": "f",
 		"constant": false,
 		"payable" : false,
+		"stateMutability": "nonpayable",
 		"type": "function",
 		"inputs": [
 		{
@@ -135,6 +138,7 @@ BOOST_AUTO_TEST_CASE(multiple_methods)
 		"name": "g",
 		"constant": false,
 		"payable" : false,
+		"stateMutability": "nonpayable",
 		"type": "function",
 		"inputs": [
 		{
@@ -151,14 +155,14 @@ BOOST_AUTO_TEST_CASE(multiple_methods)
 	}
 	])";
 
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(multiple_params)
 {
 	char const* sourceCode = R"(
 		contract test {
-			function f(uint a, uint b) returns(uint d) { return a + b; }
+			function f(uint a, uint b) public returns (uint d) { return a + b; }
 		}
 	)";
 
@@ -167,6 +171,7 @@ BOOST_AUTO_TEST_CASE(multiple_params)
 		"name": "f",
 		"constant": false,
 		"payable" : false,
+		"stateMutability": "nonpayable",
 		"type": "function",
 		"inputs": [
 		{
@@ -187,16 +192,16 @@ BOOST_AUTO_TEST_CASE(multiple_params)
 	}
 	])";
 
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(multiple_methods_order)
 {
-	// methods are expected to be in alpabetical order
+	// methods are expected to be in alphabetical order
 	char const* sourceCode = R"(
 		contract test {
-			function f(uint a) returns(uint d) { return a * 7; }
-			function c(uint b) returns(uint e) { return b * 8; }
+			function f(uint a) public returns (uint d) { return a * 7; }
+			function c(uint b) public returns (uint e) { return b * 8; }
 		}
 	)";
 
@@ -205,6 +210,7 @@ BOOST_AUTO_TEST_CASE(multiple_methods_order)
 		"name": "c",
 		"constant": false,
 		"payable" : false,
+		"stateMutability": "nonpayable",
 		"type": "function",
 		"inputs": [
 		{
@@ -223,6 +229,7 @@ BOOST_AUTO_TEST_CASE(multiple_methods_order)
 		"name": "f",
 		"constant": false,
 		"payable" : false,
+		"stateMutability": "nonpayable",
 		"type": "function",
 		"inputs": [
 		{
@@ -239,15 +246,15 @@ BOOST_AUTO_TEST_CASE(multiple_methods_order)
 	}
 	])";
 
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
-BOOST_AUTO_TEST_CASE(const_function)
+BOOST_AUTO_TEST_CASE(view_function)
 {
 	char const* sourceCode = R"(
 		contract test {
-			function foo(uint a, uint b) returns(uint d) { return a + b; }
-			function boo(uint32 a) constant returns(uint b) { return a * 4; }
+			function foo(uint a, uint b) public returns (uint d) { return a + b; }
+			function boo(uint32 a) public view returns(uint b) { return a * 4; }
 		}
 	)";
 
@@ -256,6 +263,7 @@ BOOST_AUTO_TEST_CASE(const_function)
 		"name": "foo",
 		"constant": false,
 		"payable" : false,
+		"stateMutability": "nonpayable",
 		"type": "function",
 		"inputs": [
 		{
@@ -278,6 +286,7 @@ BOOST_AUTO_TEST_CASE(const_function)
 		"name": "boo",
 		"constant": true,
 		"payable" : false,
+		"stateMutability": "view",
 		"type": "function",
 		"inputs": [{
 			"name": "a",
@@ -292,16 +301,73 @@ BOOST_AUTO_TEST_CASE(const_function)
 	}
 	])";
 
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
+}
+
+BOOST_AUTO_TEST_CASE(pure_function)
+{
+	char const* sourceCode = R"(
+		contract test {
+			function foo(uint a, uint b) public returns (uint d) { return a + b; }
+			function boo(uint32 a) public pure returns (uint b) { return a * 4; }
+		}
+	)";
+
+	char const* interface = R"([
+	{
+		"name": "foo",
+		"constant": false,
+		"payable" : false,
+		"stateMutability": "nonpayable",
+		"type": "function",
+		"inputs": [
+		{
+			"name": "a",
+			"type": "uint256"
+		},
+		{
+			"name": "b",
+			"type": "uint256"
+		}
+		],
+		"outputs": [
+		{
+			"name": "d",
+			"type": "uint256"
+		}
+		]
+	},
+	{
+		"name": "boo",
+		"constant": true,
+		"payable" : false,
+		"stateMutability": "pure",
+		"type": "function",
+		"inputs": [{
+			"name": "a",
+			"type": "uint32"
+		}],
+		"outputs": [
+		{
+			"name": "b",
+			"type": "uint256"
+		}
+		]
+	}
+	])";
+
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(events)
 {
 	char const* sourceCode = R"(
 		contract test {
-			function f(uint a) returns(uint d) { return a * 7; }
+			function f(uint a) public returns (uint d) { return a * 7; }
 			event e1(uint b, address indexed c);
 			event e2();
+			event e2(uint a);
+			event e3() anonymous;
 		}
 	)";
 	char const* interface = R"([
@@ -309,6 +375,7 @@ BOOST_AUTO_TEST_CASE(events)
 		"name": "f",
 		"constant": false,
 		"payable" : false,
+		"stateMutability": "nonpayable",
 		"type": "function",
 		"inputs": [
 		{
@@ -345,11 +412,29 @@ BOOST_AUTO_TEST_CASE(events)
 		"type": "event",
 		"anonymous": false,
 		"inputs": []
+	},
+	{
+		"name": "e2",
+		"type": "event",
+		"anonymous": false,
+		"inputs": [
+		{
+			"indexed": false,
+			"name": "a",
+			"type": "uint256"
+		}
+		]
+	},
+	{
+		"name": "e3",
+		"type": "event",
+		"anonymous": true,
+		"inputs": []
 	}
 
 	])";
 
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(events_anonymous)
@@ -369,18 +454,18 @@ BOOST_AUTO_TEST_CASE(events_anonymous)
 
 	])";
 
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(inherited)
 {
 	char const* sourceCode = R"(
 		contract Base {
-			function baseFunction(uint p) returns (uint i) { return p; }
+			function baseFunction(uint p) public returns (uint i) { return p; }
 			event baseEvent(bytes32 indexed evtArgBase);
 		}
 		contract Derived is Base {
-			function derivedFunction(bytes32 p) returns (bytes32 i) { return p; }
+			function derivedFunction(bytes32 p) public returns (bytes32 i) { return p; }
 			event derivedEvent(uint indexed evtArgDerived);
 		}
 	)";
@@ -390,6 +475,7 @@ BOOST_AUTO_TEST_CASE(inherited)
 		"name": "baseFunction",
 		"constant": false,
 		"payable" : false,
+		"stateMutability": "nonpayable",
 		"type": "function",
 		"inputs":
 		[{
@@ -406,6 +492,7 @@ BOOST_AUTO_TEST_CASE(inherited)
 		"name": "derivedFunction",
 		"constant": false,
 		"payable" : false,
+		"stateMutability": "nonpayable",
 		"type": "function",
 		"inputs":
 		[{
@@ -442,13 +529,13 @@ BOOST_AUTO_TEST_CASE(inherited)
 	}])";
 
 
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "Derived", interface);
 }
 BOOST_AUTO_TEST_CASE(empty_name_input_parameter_with_named_one)
 {
 	char const* sourceCode = R"(
 		contract test {
-			function f(uint, uint k) returns(uint ret_k, uint ret_g) {
+			function f(uint, uint k) public returns (uint ret_k, uint ret_g) {
 				uint g = 8;
 				ret_k = k;
 				ret_g = g;
@@ -461,6 +548,7 @@ BOOST_AUTO_TEST_CASE(empty_name_input_parameter_with_named_one)
 		"name": "f",
 		"constant": false,
 		"payable" : false,
+		"stateMutability": "nonpayable",
 		"type": "function",
 		"inputs": [
 		{
@@ -485,14 +573,14 @@ BOOST_AUTO_TEST_CASE(empty_name_input_parameter_with_named_one)
 	}
 	])";
 
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(empty_name_return_parameter)
 {
 	char const* sourceCode = R"(
 		contract test {
-			function f(uint k) returns(uint) {
+			function f(uint k) public returns (uint) {
 				return k;
 			}
 		}
@@ -503,6 +591,7 @@ BOOST_AUTO_TEST_CASE(empty_name_return_parameter)
 		"name": "f",
 		"constant": false,
 		"payable" : false,
+		"stateMutability": "nonpayable",
 		"type": "function",
 		"inputs": [
 		{
@@ -518,14 +607,14 @@ BOOST_AUTO_TEST_CASE(empty_name_return_parameter)
 		]
 	}
 	])";
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(constructor_abi)
 {
 	char const* sourceCode = R"(
 		contract test {
-			function test(uint param1, test param2, bool param3) {}
+			constructor(uint param1, test param2, bool param3) public {}
 		}
 	)";
 
@@ -546,12 +635,44 @@ BOOST_AUTO_TEST_CASE(constructor_abi)
 			}
 		],
 		"payable": false,
+		"stateMutability": "nonpayable",
 		"type": "constructor"
 	}
 	])";
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
+BOOST_AUTO_TEST_CASE(payable_constructor_abi)
+{
+	char const* sourceCode = R"(
+		contract test {
+			constructor(uint param1, test param2, bool param3) public payable {}
+		}
+	)";
+
+	char const* interface = R"([
+	{
+		"inputs": [
+			{
+				"name": "param1",
+				"type": "uint256"
+			},
+			{
+				"name": "param2",
+				"type": "address"
+			},
+			{
+				"name": "param3",
+				"type": "bool"
+			}
+		],
+		"payable": true,
+		"stateMutability": "payable",
+		"type": "constructor"
+	}
+	])";
+	checkInterface(sourceCode, "test", interface);
+}
 
 BOOST_AUTO_TEST_CASE(return_param_in_abi)
 {
@@ -559,8 +680,8 @@ BOOST_AUTO_TEST_CASE(return_param_in_abi)
 	char const* sourceCode = R"(
 		contract test {
 			enum ActionChoices { GoLeft, GoRight, GoStraight, Sit }
-			function test(ActionChoices param) {}
-			function ret() returns(ActionChoices) {
+			constructor(ActionChoices param) public {}
+			function ret() public returns (ActionChoices) {
 				ActionChoices action = ActionChoices.GoLeft;
 				return action;
 			}
@@ -572,6 +693,7 @@ BOOST_AUTO_TEST_CASE(return_param_in_abi)
 		{
 			"constant" : false,
 			"payable" : false,
+			"stateMutability": "nonpayable",
 			"inputs" : [],
 			"name" : "ret",
 			"outputs" : [
@@ -590,11 +712,12 @@ BOOST_AUTO_TEST_CASE(return_param_in_abi)
 				}
 			],
 			"payable": false,
+			"stateMutability": "nonpayable",
 			"type": "constructor"
 		}
 	]
 	)";
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(strings_and_arrays)
@@ -602,7 +725,7 @@ BOOST_AUTO_TEST_CASE(strings_and_arrays)
 	// bug #1801
 	char const* sourceCode = R"(
 		contract test {
-			function f(string a, bytes b, uint[] c) external {}
+			function f(string calldata a, bytes calldata b, uint[] calldata c) external {}
 		}
 	)";
 
@@ -611,6 +734,7 @@ BOOST_AUTO_TEST_CASE(strings_and_arrays)
 		{
 			"constant" : false,
 			"payable" : false,
+			"stateMutability": "nonpayable",
 			"name": "f",
 			"inputs": [
 				{ "name": "a", "type": "string" },
@@ -622,7 +746,7 @@ BOOST_AUTO_TEST_CASE(strings_and_arrays)
 		}
 	]
 	)";
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(library_function)
@@ -630,37 +754,37 @@ BOOST_AUTO_TEST_CASE(library_function)
 	char const* sourceCode = R"(
 		library test {
 			struct StructType { uint a; }
-			function f(StructType storage b, uint[] storage c, test d) returns (uint[] e, StructType storage f) {}
+			function f(StructType storage b, uint[] storage c, test d) public returns (uint[] memory e, StructType storage f) { f = f; }
+			function f1(uint[] memory c, test d) public pure returns (uint[] memory e) {  }
 		}
 	)";
 
 	char const* interface = R"(
 	[
 		{
-			"constant" : false,
+			"constant" : true,
 			"payable" : false,
-			"name": "f",
+			"stateMutability": "pure",
+			"name": "f1",
 			"inputs": [
-				{ "name": "b", "type": "test.StructType storage" },
-				{ "name": "c", "type": "uint256[] storage" },
+				{ "name": "c", "type": "uint256[]" },
 				{ "name": "d", "type": "test" }
 			],
 			"outputs": [
-				{ "name": "e", "type": "uint256[]" },
-				{ "name": "f", "type": "test.StructType storage" }
+				{ "name": "e", "type": "uint256[]" }
 			],
 			"type" : "function"
 		}
 	]
 	)";
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(include_fallback_function)
 {
 	char const* sourceCode = R"(
 		contract test {
-			function() {}
+			function() external {}
 		}
 	)";
 
@@ -668,19 +792,20 @@ BOOST_AUTO_TEST_CASE(include_fallback_function)
 	[
 		{
 			"payable": false,
+			"stateMutability": "nonpayable",
 			"type" : "fallback"
 		}
 	]
 	)";
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(payable_function)
 {
 	char const* sourceCode = R"(
 		contract test {
-			function f() {}
-			function g() payable {}
+			function f() public {}
+			function g() public payable {}
 		}
 	)";
 
@@ -689,6 +814,7 @@ BOOST_AUTO_TEST_CASE(payable_function)
 		{
 			"constant" : false,
 			"payable": false,
+			"stateMutability": "nonpayable",
 			"inputs": [],
 			"name": "f",
 			"outputs": [],
@@ -697,6 +823,7 @@ BOOST_AUTO_TEST_CASE(payable_function)
 		{
 			"constant" : false,
 			"payable": true,
+			"stateMutability": "payable",
 			"inputs": [],
 			"name": "g",
 			"outputs": [],
@@ -704,14 +831,14 @@ BOOST_AUTO_TEST_CASE(payable_function)
 		}
 	]
 	)";
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(payable_fallback_function)
 {
 	char const* sourceCode = R"(
 		contract test {
-			function () payable {}
+			function () external payable {}
 		}
 	)";
 
@@ -719,18 +846,19 @@ BOOST_AUTO_TEST_CASE(payable_fallback_function)
 	[
 		{
 			"payable": true,
+			"stateMutability": "payable",
 			"type" : "fallback"
 		}
 	]
 	)";
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
 }
 
 BOOST_AUTO_TEST_CASE(function_type)
 {
 	char const* sourceCode = R"(
 		contract test {
-			function g(function(uint) external returns (uint) x) {}
+			function g(function(uint) external returns (uint) x) public {}
 		}
 	)";
 
@@ -739,6 +867,7 @@ BOOST_AUTO_TEST_CASE(function_type)
 	{
 		"constant" : false,
 		"payable": false,
+		"stateMutability": "nonpayable",
 		"inputs": [{
 			"name": "x",
 			"type": "function"
@@ -749,7 +878,207 @@ BOOST_AUTO_TEST_CASE(function_type)
 	}
 	]
 	)";
-	checkInterface(sourceCode, interface);
+	checkInterface(sourceCode, "test", interface);
+}
+
+BOOST_AUTO_TEST_CASE(return_structs)
+{
+	char const* sourceCode = R"(
+		pragma experimental ABIEncoderV2;
+		contract C {
+			struct S { uint a; T[] sub; }
+			struct T { uint[2] x; }
+			function f() public returns (uint x, S memory s) {
+			}
+		}
+	)";
+	char const* interface = R"(
+	[{
+		"constant" : false,
+		"inputs" : [],
+		"name" : "f",
+		"outputs" : [
+			{
+			"name" : "x",
+			"type" : "uint256"
+			},
+			{
+			"components" : [
+				{
+					"name" : "a",
+					"type" : "uint256"
+				},
+				{
+					"components" : [
+						{
+						"name" : "x",
+						"type" : "uint256[2]"
+						}
+					],
+					"name" : "sub",
+					"type" : "tuple[]"
+				}
+			],
+			"name" : "s",
+			"type" : "tuple"
+			}
+		],
+		"payable" : false,
+		"stateMutability" : "nonpayable",
+		"type" : "function"
+	}]
+	)";
+	checkInterface(sourceCode, "C", interface);
+}
+
+BOOST_AUTO_TEST_CASE(return_structs_with_contracts)
+{
+	char const* sourceCode = R"(
+		pragma experimental ABIEncoderV2;
+		contract C {
+			struct S { C[] x; C y; }
+			function f() public returns (S memory s, C c) {
+			}
+		}
+	)";
+	char const* interface = R"(
+	[{
+		"constant": false,
+		"inputs": [],
+		"name": "f",
+		"outputs": [
+			{
+				"components": [
+					{
+						"name": "x",
+						"type": "address[]"
+					},
+					{
+						"name": "y",
+						"type": "address"
+					}
+				],
+				"name": "s",
+				"type": "tuple"
+			},
+			{
+				"name": "c",
+				"type": "address"
+			}
+		],
+		"payable": false,
+		"stateMutability" : "nonpayable",
+		"type": "function"
+	}]
+	)";
+	checkInterface(sourceCode, "C", interface);
+}
+
+BOOST_AUTO_TEST_CASE(event_structs)
+{
+	char const* sourceCode = R"(
+		pragma experimental ABIEncoderV2;
+		contract C {
+			struct S { uint a; T[] sub; bytes b; }
+			struct T { uint[2] x; }
+			event E(T t, S s);
+		}
+	)";
+	char const *interface = R"(
+		[{
+		"anonymous": false,
+		"inputs": [
+			{
+				"components": [
+					{
+						"name": "x",
+						"type": "uint256[2]"
+					}
+				],
+				"indexed": false,
+				"name": "t",
+				"type": "tuple"
+			},
+			{
+				"components": [
+					{
+						"name": "a",
+						"type": "uint256"
+					},
+					{
+						"components": [
+							{
+								"name": "x",
+								"type": "uint256[2]"
+							}
+						],
+						"name": "sub",
+						"type": "tuple[]"
+					},
+					{
+						"name": "b",
+						"type": "bytes"
+					}
+				],
+				"indexed": false,
+				"name": "s",
+				"type": "tuple"
+			}
+		],
+		"name": "E",
+		"type": "event"
+	}]
+	)";
+	checkInterface(sourceCode, "C", interface);
+}
+
+BOOST_AUTO_TEST_CASE(structs_in_libraries)
+{
+	char const* sourceCode = R"(
+		pragma experimental ABIEncoderV2;
+		library L {
+			struct S { uint a; T[] sub; bytes b; }
+			struct T { uint[2] x; }
+			function f(L.S storage s) public view {}
+			function g(L.S memory s) public view {}
+		}
+	)";
+	char const* interface = R"(
+	[{
+		"constant": true,
+		"inputs": [
+			{
+				"components": [
+					{
+						"name": "a",
+						"type": "uint256"
+					},
+					{
+						"components": [
+							{
+								"name": "x",
+								"type": "uint256[2]"
+							}
+						],
+						"name": "sub",
+						"type": "tuple[]"
+					},
+					{
+						"name": "b",
+						"type": "bytes"
+					}
+				],
+				"name": "s",
+				"type": "tuple"
+			}
+		],
+		"name": "g",
+		"outputs": [],
+		"payable": false,
+		"stateMutability": "view",
+		"type": "function"
+	}])";
+	checkInterface(sourceCode, "L", interface);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -20,24 +20,31 @@
  * Solidity compiler.
  */
 
-#include <libsolidity/codegen/ContractCompiler.h>
-#include <libsolidity/inlineasm/AsmCodeGen.h>
 #include <libsolidity/ast/AST.h>
-#include <libsolidity/interface/ErrorReporter.h>
-#include <libsolidity/codegen/ExpressionCompiler.h>
+#include <libsolidity/ast/TypeProvider.h>
 #include <libsolidity/codegen/CompilerUtils.h>
+#include <libsolidity/codegen/ContractCompiler.h>
+#include <libsolidity/codegen/ExpressionCompiler.h>
+
+#include <libyul/backends/evm/AsmCodeGen.h>
 
 #include <libevmasm/Instruction.h>
 #include <libevmasm/Assembly.h>
 #include <libevmasm/GasMeter.h>
 
-#include <boost/range/adaptor/reversed.hpp>
+#include <liblangutil/ErrorReporter.h>
 
+#include <boost/range/adaptor/reversed.hpp>
 #include <algorithm>
 
 using namespace std;
 using namespace dev;
+using namespace langutil;
+using namespace dev::eth;
 using namespace dev::solidity;
+
+namespace
+{
 
 /**
  * Simple helper class to ensure that the stack height is the same at certain places in the code.
@@ -45,62 +52,59 @@ using namespace dev::solidity;
 class StackHeightChecker
 {
 public:
-	StackHeightChecker(CompilerContext const& _context):
+	explicit StackHeightChecker(CompilerContext const& _context):
 		m_context(_context), stackHeight(m_context.stackHeight()) {}
-	void check() { solAssert(m_context.stackHeight() == stackHeight, std::string("I sense a disturbance in the stack: ") + std::to_string(m_context.stackHeight()) + " vs " + std::to_string(stackHeight)); }
+	void check() { solAssert(m_context.stackHeight() == stackHeight, std::string("I sense a disturbance in the stack: ") + to_string(m_context.stackHeight()) + " vs " + to_string(stackHeight)); }
 private:
 	CompilerContext const& m_context;
 	unsigned stackHeight;
 };
 
+}
+
 void ContractCompiler::compileContract(
 	ContractDefinition const& _contract,
-	std::map<const ContractDefinition*, eth::Assembly const*> const& _contracts
+	map<ContractDefinition const*, shared_ptr<Compiler const>> const& _otherCompilers
 )
 {
 	CompilerContext::LocationSetter locationSetter(m_context, _contract);
-	initializeContext(_contract, _contracts);
+
+	if (_contract.isLibrary())
+		// Check whether this is a call (true) or a delegatecall (false).
+		// This has to be the first code in the contract.
+		appendDelegatecallCheck();
+
+	initializeContext(_contract, _otherCompilers);
+	// This generates the dispatch function for externally visible functions
+	// and adds the function to the compilation queue. Additionally internal functions,
+	// which are referenced directly or indirectly will be added.
 	appendFunctionSelector(_contract);
+	// This processes the above populated queue until it is empty.
 	appendMissingFunctions();
 }
 
 size_t ContractCompiler::compileConstructor(
 	ContractDefinition const& _contract,
-	std::map<const ContractDefinition*, eth::Assembly const*> const& _contracts
+	std::map<ContractDefinition const*, shared_ptr<Compiler const>> const& _otherCompilers
 )
 {
 	CompilerContext::LocationSetter locationSetter(m_context, _contract);
-	initializeContext(_contract, _contracts);
-	return packIntoContractCreator(_contract);
-}
-
-size_t ContractCompiler::compileClone(
-	ContractDefinition const& _contract,
-	map<ContractDefinition const*, eth::Assembly const*> const& _contracts
-)
-{
-	initializeContext(_contract, _contracts);
-
-	appendInitAndConstructorCode(_contract);
-
-	//@todo determine largest return size of all runtime functions
-	auto runtimeSub = m_context.addSubroutine(cloneRuntime());
-
-	// stack contains sub size
-	m_context << Instruction::DUP1 << runtimeSub << u256(0) << Instruction::CODECOPY;
-	m_context << u256(0) << Instruction::RETURN;
-
-	appendMissingFunctions();
-
-	return size_t(runtimeSub.data());
+	if (_contract.isLibrary())
+		return deployLibrary(_contract);
+	else
+	{
+		initializeContext(_contract, _otherCompilers);
+		return packIntoContractCreator(_contract);
+	}
 }
 
 void ContractCompiler::initializeContext(
 	ContractDefinition const& _contract,
-	map<ContractDefinition const*, eth::Assembly const*> const& _compiledContracts
+	map<ContractDefinition const*, shared_ptr<Compiler const>> const& _otherCompilers
 )
 {
-	m_context.setCompiledContracts(_compiledContracts);
+	m_context.setExperimentalFeatures(_contract.sourceUnit().annotation().experimentalFeatures);
+	m_context.setOtherCompilers(_otherCompilers);
 	m_context.setInheritanceHierarchy(_contract.annotation().linearizedBaseContracts);
 	CompilerUtils(m_context).initialiseFreeMemoryPointer();
 	registerStateVariables(_contract);
@@ -111,38 +115,21 @@ void ContractCompiler::appendCallValueCheck()
 {
 	// Throw if function is not payable but call contained ether.
 	m_context << Instruction::CALLVALUE;
+	// TODO: error message?
 	m_context.appendConditionalRevert();
 }
 
 void ContractCompiler::appendInitAndConstructorCode(ContractDefinition const& _contract)
 {
-	// Determine the arguments that are used for the base constructors.
-	std::vector<ContractDefinition const*> const& bases = _contract.annotation().linearizedBaseContracts;
-	for (ContractDefinition const* contract: bases)
-	{
-		if (FunctionDefinition const* constructor = contract->constructor())
-			for (auto const& modifier: constructor->modifiers())
-			{
-				auto baseContract = dynamic_cast<ContractDefinition const*>(
-					modifier->name()->annotation().referencedDeclaration);
-				if (baseContract)
-					if (m_baseArguments.count(baseContract->constructor()) == 0)
-						m_baseArguments[baseContract->constructor()] = &modifier->arguments();
-			}
+	solAssert(!_contract.isLibrary(), "Tried to initialize library.");
+	CompilerContext::LocationSetter locationSetter(m_context, _contract);
 
-		for (ASTPointer<InheritanceSpecifier> const& base: contract->baseContracts())
-		{
-			ContractDefinition const* baseContract = dynamic_cast<ContractDefinition const*>(
-				base->name().annotation().referencedDeclaration
-			);
-			solAssert(baseContract, "");
+	m_baseArguments = &_contract.annotation().baseConstructorArguments;
 
-			if (m_baseArguments.count(baseContract->constructor()) == 0)
-				m_baseArguments[baseContract->constructor()] = &base->arguments();
-		}
-	}
 	// Initialization of state variables in base-to-derived order.
-	for (ContractDefinition const* contract: boost::adaptors::reverse(bases))
+	for (ContractDefinition const* contract: boost::adaptors::reverse(
+		_contract.annotation().linearizedBaseContracts
+	))
 		initializeStateVariables(*contract);
 
 	if (FunctionDefinition const* constructor = _contract.constructor())
@@ -156,6 +143,7 @@ void ContractCompiler::appendInitAndConstructorCode(ContractDefinition const& _c
 size_t ContractCompiler::packIntoContractCreator(ContractDefinition const& _contract)
 {
 	solAssert(!!m_runtimeCompiler, "");
+	solAssert(!_contract.isLibrary(), "Tried to use contract creator or library.");
 
 	appendInitAndConstructorCode(_contract);
 
@@ -168,6 +156,7 @@ size_t ContractCompiler::packIntoContractCreator(ContractDefinition const& _cont
 	appendMissingFunctions();
 	m_runtimeCompiler->appendMissingFunctions();
 
+	CompilerContext::LocationSetter locationSetter(m_context, _contract);
 	m_context << deployRoutine;
 
 	solAssert(m_context.runtimeSub() != size_t(-1), "Runtime sub not registered");
@@ -180,15 +169,50 @@ size_t ContractCompiler::packIntoContractCreator(ContractDefinition const& _cont
 	return m_context.runtimeSub();
 }
 
+size_t ContractCompiler::deployLibrary(ContractDefinition const& _contract)
+{
+	solAssert(!!m_runtimeCompiler, "");
+	solAssert(_contract.isLibrary(), "Tried to deploy contract as library.");
+
+	CompilerContext::LocationSetter locationSetter(m_context, _contract);
+
+	solAssert(m_context.runtimeSub() != size_t(-1), "Runtime sub not registered");
+	m_context.pushSubroutineSize(m_context.runtimeSub());
+	m_context.pushSubroutineOffset(m_context.runtimeSub());
+	// This code replaces the address added by appendDeployTimeAddress().
+	m_context.appendInlineAssembly(R"(
+	{
+		// If code starts at 11, an mstore(0) writes to the full PUSH20 plus data
+		// without the need for a shift.
+		let codepos := 11
+		codecopy(codepos, subOffset, subSize)
+		// Check that the first opcode is a PUSH20
+		if iszero(eq(0x73, byte(0, mload(codepos)))) { invalid() }
+		mstore(0, address())
+		mstore8(codepos, 0x73)
+		return(codepos, subSize)
+	}
+	)", {"subSize", "subOffset"});
+
+	return m_context.runtimeSub();
+}
+
 void ContractCompiler::appendBaseConstructor(FunctionDefinition const& _constructor)
 {
 	CompilerContext::LocationSetter locationSetter(m_context, _constructor);
 	FunctionType constructorType(_constructor);
 	if (!constructorType.parameterTypes().empty())
 	{
-		solAssert(m_baseArguments.count(&_constructor), "");
-		std::vector<ASTPointer<Expression>> const* arguments = m_baseArguments[&_constructor];
+		solAssert(m_baseArguments, "");
+		solAssert(m_baseArguments->count(&_constructor), "");
+		std::vector<ASTPointer<Expression>> const* arguments = nullptr;
+		ASTNode const* baseArgumentNode = m_baseArguments->at(&_constructor);
+		if (auto inheritanceSpecifier = dynamic_cast<InheritanceSpecifier const*>(baseArgumentNode))
+			arguments = inheritanceSpecifier->arguments();
+		else if (auto modifierInvocation = dynamic_cast<ModifierInvocation const*>(baseArgumentNode))
+			arguments = modifierInvocation->arguments();
 		solAssert(arguments, "");
+		solAssert(arguments->size() == constructorType.parameterTypes().size(), "");
 		for (unsigned i = 0; i < arguments->size(); ++i)
 			compileExpression(*(arguments->at(i)), constructorType.parameterTypes()[i]);
 	}
@@ -204,78 +228,177 @@ void ContractCompiler::appendConstructor(FunctionDefinition const& _constructor)
 	// copy constructor arguments from code to memory and then to stack, they are supplied after the actual program
 	if (!_constructor.parameters().empty())
 	{
-		unsigned argumentSize = 0;
-		for (ASTPointer<VariableDeclaration> const& var: _constructor.parameters())
-			if (var->annotation().type->isDynamicallySized())
-			{
-				argumentSize = 0;
-				break;
-			}
-			else
-				argumentSize += var->annotation().type->calldataEncodedSize();
-
 		CompilerUtils(m_context).fetchFreeMemoryPointer();
-		if (argumentSize == 0)
-		{
-			// argument size is dynamic, use CODESIZE to determine it
-			m_context.appendProgramSize(); // program itself
-			// CODESIZE is program plus manually added arguments
-			m_context << Instruction::CODESIZE << Instruction::SUB;
-		}
-		else
-			m_context << u256(argumentSize);
+		// CODESIZE returns the actual size of the code,
+		// which is the size of the generated code (``programSize``)
+		// plus the constructor arguments added to the transaction payload.
+		m_context.appendProgramSize();
+		m_context << Instruction::CODESIZE << Instruction::SUB;
 		// stack: <memptr> <argument size>
 		m_context << Instruction::DUP1;
 		m_context.appendProgramSize();
 		m_context << Instruction::DUP4 << Instruction::CODECOPY;
-		m_context << Instruction::DUP2 << Instruction::ADD;
+		// stack: <memptr> <argument size>
+		m_context << Instruction::DUP2 << Instruction::DUP2 << Instruction::ADD;
+		// stack: <memptr> <argument size> <mem end>
 		CompilerUtils(m_context).storeFreeMemoryPointer();
-		// stack: <memptr>
-		appendCalldataUnpacker(FunctionType(_constructor).parameterTypes(), true);
+		// stack: <memptr> <argument size>
+		CompilerUtils(m_context).abiDecode(FunctionType(_constructor).parameterTypes(), true);
 	}
 	_constructor.accept(*this);
+}
+
+void ContractCompiler::appendDelegatecallCheck()
+{
+	// Special constant that will be replaced by the address at deploy time.
+	// At compilation time, this is just "PUSH20 00...000".
+	m_context.appendDeployTimeAddress();
+	m_context << Instruction::ADDRESS << Instruction::EQ;
+	// The result on the stack is
+	// "We have not been called via DELEGATECALL".
+}
+
+void ContractCompiler::appendInternalSelector(
+	map<FixedHash<4>, eth::AssemblyItem const> const& _entryPoints,
+	vector<FixedHash<4>> const& _ids,
+	eth::AssemblyItem const& _notFoundTag,
+	size_t _runs
+)
+{
+	// Code for selecting from n functions without split:
+	//   n times: dup1, push4 <id_i>, eq, push2/3 <tag_i>, jumpi
+	//   push2/3 <notfound> jump
+	// (called SELECT[n])
+	// Code for selecting from n functions with split:
+	//   dup1, push4 <pivot>, gt, push2/3<tag_less>, jumpi
+	//     SELECT[n/2]
+	//   tag_less:
+	//     SELECT[n/2]
+	//
+	// This means each split adds 16-18 bytes of additional code (note the additional jump out!)
+	// The average execution cost if we do not split at all are:
+	//   (3 + 3 + 3 + 3 + 10) * n/2 = 24 * n/2 = 12 * n
+	// If we split once:
+	//    (3 + 3 + 3 + 3 + 10) + 24 * n/4 = 24 * (n/4 + 1) = 6 * n + 24;
+	//
+	// We should split if
+	//     _runs * 12 * n > _runs * (6 * n + 24) + 17 * createDataGas
+	// <=> _runs * 6 * (n - 4) > 17 * createDataGas
+	//
+	// Which also means that the execution itself is not profitable
+	// unless we have at least 5 functions.
+
+	// Start with some comparisons to avoid overflow, then do the actual comparison.
+	bool split = false;
+	if (_ids.size() <= 4)
+		split = false;
+	else if (_runs > (17 * eth::GasCosts::createDataGas) / 6)
+		split = true;
+	else
+		split = (_runs * 6 * (_ids.size() - 4) > 17 * eth::GasCosts::createDataGas);
+
+	if (split)
+	{
+		size_t pivotIndex = _ids.size() / 2;
+		FixedHash<4> pivot{_ids.at(pivotIndex)};
+		m_context << dupInstruction(1) << u256(FixedHash<4>::Arith(pivot)) << Instruction::GT;
+		eth::AssemblyItem lessTag{m_context.appendConditionalJump()};
+		// Here, we have funid >= pivot
+		vector<FixedHash<4>> larger{_ids.begin() + pivotIndex, _ids.end()};
+		appendInternalSelector(_entryPoints, larger, _notFoundTag, _runs);
+		m_context << lessTag;
+		// Here, we have funid < pivot
+		vector<FixedHash<4>> smaller{_ids.begin(), _ids.begin() + pivotIndex};
+		appendInternalSelector(_entryPoints, smaller, _notFoundTag, _runs);
+	}
+	else
+	{
+		for (auto const& id: _ids)
+		{
+			m_context << dupInstruction(1) << u256(FixedHash<4>::Arith(id)) << Instruction::EQ;
+			m_context.appendConditionalJumpTo(_entryPoints.at(id));
+		}
+		m_context.appendJumpTo(_notFoundTag);
+	}
+}
+
+namespace
+{
+
+// Helper function to check if any function is payable
+bool hasPayableFunctions(ContractDefinition const& _contract)
+{
+	FunctionDefinition const* fallback = _contract.fallbackFunction();
+	if (fallback && fallback->isPayable())
+		return true;
+
+	for (auto const& it: _contract.interfaceFunctions())
+		if (it.second->isPayable())
+			return true;
+
+	return false;
+}
+
 }
 
 void ContractCompiler::appendFunctionSelector(ContractDefinition const& _contract)
 {
 	map<FixedHash<4>, FunctionTypePointer> interfaceFunctions = _contract.interfaceFunctions();
-	map<FixedHash<4>, const eth::AssemblyItem> callDataUnpackerEntryPoints;
+	map<FixedHash<4>, eth::AssemblyItem const> callDataUnpackerEntryPoints;
+
+	if (_contract.isLibrary())
+	{
+		solAssert(m_context.stackHeight() == 1, "CALL / DELEGATECALL flag expected.");
+	}
 
 	FunctionDefinition const* fallback = _contract.fallbackFunction();
-	eth::AssemblyItem notFound = m_context.newTag();
-	// shortcut messages without data if we have many functions in order to be able to receive
-	// ether with constant gas
-	if (interfaceFunctions.size() > 5 || fallback)
+	solAssert(!_contract.isLibrary() || !fallback, "Libraries can't have fallback functions");
+
+	bool needToAddCallvalueCheck = true;
+	if (!hasPayableFunctions(_contract) && !interfaceFunctions.empty() && !_contract.isLibrary())
 	{
-		m_context << Instruction::CALLDATASIZE << Instruction::ISZERO;
-		m_context.appendConditionalJumpTo(notFound);
+		appendCallValueCheck();
+		needToAddCallvalueCheck = false;
 	}
+
+	eth::AssemblyItem notFound = m_context.newTag();
+	// directly jump to fallback if the data is too short to contain a function selector
+	// also guards against short data
+	m_context << u256(4) << Instruction::CALLDATASIZE << Instruction::LT;
+	m_context.appendConditionalJumpTo(notFound);
 
 	// retrieve the function signature hash from the calldata
 	if (!interfaceFunctions.empty())
+	{
 		CompilerUtils(m_context).loadFromMemory(0, IntegerType(CompilerUtils::dataStartOffset * 8), true);
 
-	// stack now is: 1 0 <funhash>
-	for (auto const& it: interfaceFunctions)
-	{
-		callDataUnpackerEntryPoints.insert(std::make_pair(it.first, m_context.newTag()));
-		m_context << dupInstruction(1) << u256(FixedHash<4>::Arith(it.first)) << Instruction::EQ;
-		m_context.appendConditionalJumpTo(callDataUnpackerEntryPoints.at(it.first));
+		// stack now is: <can-call-non-view-functions>? <funhash>
+		vector<FixedHash<4>> sortedIDs;
+		for (auto const& it: interfaceFunctions)
+		{
+			callDataUnpackerEntryPoints.emplace(it.first, m_context.newTag());
+			sortedIDs.emplace_back(it.first);
+		}
+		std::sort(sortedIDs.begin(), sortedIDs.end());
+		appendInternalSelector(callDataUnpackerEntryPoints, sortedIDs, notFound, m_optimiserSettings.expectedExecutionsPerDeployment);
 	}
-	m_context.appendJumpTo(notFound);
 
 	m_context << notFound;
+
 	if (fallback)
 	{
-		if (!fallback->isPayable())
+		solAssert(!_contract.isLibrary(), "");
+		if (!fallback->isPayable() && needToAddCallvalueCheck)
 			appendCallValueCheck();
 
-		eth::AssemblyItem returnTag = m_context.pushNewTag();
+		solAssert(fallback->isFallback(), "");
+		solAssert(FunctionType(*fallback).parameterTypes().empty(), "");
+		solAssert(FunctionType(*fallback).returnParameterTypes().empty(), "");
 		fallback->accept(*this);
-		m_context << returnTag;
-		appendReturnValuePacker(FunctionType(*fallback).returnParameterTypes(), _contract.isLibrary());
+		m_context << Instruction::STOP;
 	}
 	else
+		// TODO: error message here?
 		m_context.appendRevert();
 
 	for (auto const& it: interfaceFunctions)
@@ -285,108 +408,42 @@ void ContractCompiler::appendFunctionSelector(ContractDefinition const& _contrac
 		CompilerContext::LocationSetter locationSetter(m_context, functionType->declaration());
 
 		m_context << callDataUnpackerEntryPoints.at(it.first);
+		if (_contract.isLibrary() && functionType->stateMutability() > StateMutability::View)
+		{
+			// If the function is not a view function and is called without DELEGATECALL,
+			// we revert.
+			m_context << dupInstruction(2);
+			m_context.appendConditionalRevert();
+		}
+		m_context.setStackOffset(0);
 		// We have to allow this for libraries, because value of the previous
 		// call is still visible in the delegatecall.
-		if (!functionType->isPayable() && !_contract.isLibrary())
+		if (!functionType->isPayable() && !_contract.isLibrary() && needToAddCallvalueCheck)
 			appendCallValueCheck();
 
+		// Return tag is used to jump out of the function.
 		eth::AssemblyItem returnTag = m_context.pushNewTag();
-		m_context << CompilerUtils::dataStartOffset;
-		appendCalldataUnpacker(functionType->parameterTypes());
-		m_context.appendJumpTo(m_context.functionEntryLabel(functionType->declaration()));
+		if (!functionType->parameterTypes().empty())
+		{
+			// Parameter for calldataUnpacker
+			m_context << CompilerUtils::dataStartOffset;
+			m_context << Instruction::DUP1 << Instruction::CALLDATASIZE << Instruction::SUB;
+			CompilerUtils(m_context).abiDecode(functionType->parameterTypes());
+		}
+		m_context.appendJumpTo(
+			m_context.functionEntryLabel(functionType->declaration()),
+			eth::AssemblyItem::JumpType::IntoFunction
+		);
 		m_context << returnTag;
+		// Return tag and input parameters get consumed.
+		m_context.adjustStackOffset(
+			CompilerUtils(m_context).sizeOnStack(functionType->returnParameterTypes()) -
+			CompilerUtils(m_context).sizeOnStack(functionType->parameterTypes()) -
+			1
+		);
+		// Consumes the return parameters.
 		appendReturnValuePacker(functionType->returnParameterTypes(), _contract.isLibrary());
 	}
-}
-
-void ContractCompiler::appendCalldataUnpacker(TypePointers const& _typeParameters, bool _fromMemory)
-{
-	// We do not check the calldata size, everything is zero-padded
-
-	//@todo this does not yet support nested dynamic arrays
-
-	// Retain the offset pointer as base_offset, the point from which the data offsets are computed.
-	m_context << Instruction::DUP1;
-	for (TypePointer const& parameterType: _typeParameters)
-	{
-		// stack: v1 v2 ... v(k-1) base_offset current_offset
-		TypePointer type = parameterType->decodingType();
-		solAssert(type, "No decoding type found.");
-		if (type->category() == Type::Category::Array)
-		{
-			auto const& arrayType = dynamic_cast<ArrayType const&>(*type);
-			solUnimplementedAssert(!arrayType.baseType()->isDynamicallySized(), "Nested arrays not yet implemented.");
-			if (_fromMemory)
-			{
-				solUnimplementedAssert(
-					arrayType.baseType()->isValueType(),
-					"Nested memory arrays not yet implemented here."
-				);
-				// @todo If base type is an array or struct, it is still calldata-style encoded, so
-				// we would have to convert it like below.
-				solAssert(arrayType.location() == DataLocation::Memory, "");
-				if (arrayType.isDynamicallySized())
-				{
-					// compute data pointer
-					m_context << Instruction::DUP1 << Instruction::MLOAD;
-					m_context << Instruction::DUP3 << Instruction::ADD;
-					m_context << Instruction::SWAP2 << Instruction::SWAP1;
-					m_context << u256(0x20) << Instruction::ADD;
-				}
-				else
-				{
-					m_context << Instruction::SWAP1 << Instruction::DUP2;
-					m_context << u256(arrayType.calldataEncodedSize(true)) << Instruction::ADD;
-				}
-			}
-			else
-			{
-				// first load from calldata and potentially convert to memory if arrayType is memory
-				TypePointer calldataType = arrayType.copyForLocation(DataLocation::CallData, false);
-				if (calldataType->isDynamicallySized())
-				{
-					// put on stack: data_pointer length
-					CompilerUtils(m_context).loadFromMemoryDynamic(IntegerType(256), !_fromMemory);
-					// stack: base_offset data_offset next_pointer
-					m_context << Instruction::SWAP1 << Instruction::DUP3 << Instruction::ADD;
-					// stack: base_offset next_pointer data_pointer
-					// retrieve length
-					CompilerUtils(m_context).loadFromMemoryDynamic(IntegerType(256), !_fromMemory, true);
-					// stack: base_offset next_pointer length data_pointer
-					m_context << Instruction::SWAP2;
-					// stack: base_offset data_pointer length next_pointer
-				}
-				else
-				{
-					// leave the pointer on the stack
-					m_context << Instruction::DUP1;
-					m_context << u256(calldataType->calldataEncodedSize()) << Instruction::ADD;
-				}
-				if (arrayType.location() == DataLocation::Memory)
-				{
-					// stack: base_offset calldata_ref [length] next_calldata
-					// copy to memory
-					// move calldata type up again
-					CompilerUtils(m_context).moveIntoStack(calldataType->sizeOnStack());
-					CompilerUtils(m_context).convertType(*calldataType, arrayType, false, false, true);
-					// fetch next pointer again
-					CompilerUtils(m_context).moveToStackTop(arrayType.sizeOnStack());
-				}
-				// move base_offset up
-				CompilerUtils(m_context).moveToStackTop(1 + arrayType.sizeOnStack());
-				m_context << Instruction::SWAP1;
-			}
-		}
-		else
-		{
-			solAssert(!type->isDynamicallySized(), "Unknown dynamically sized type: " + type->toString());
-			CompilerUtils(m_context).loadFromMemoryDynamic(*type, !_fromMemory, true);
-			CompilerUtils(m_context).moveToStackTop(1 + type->sizeOnStack());
-			m_context << Instruction::SWAP1;
-		}
-		// stack: v1 v2 ... v(k-1) v(k) base_offset mem_offset
-	}
-	m_context << Instruction::POP << Instruction::POP;
 }
 
 void ContractCompiler::appendReturnValuePacker(TypePointers const& _typeParameters, bool _isLibrary)
@@ -399,7 +456,7 @@ void ContractCompiler::appendReturnValuePacker(TypePointers const& _typeParamete
 		utils.fetchFreeMemoryPointer();
 		//@todo optimization: if we return a single memory array, there should be enough space before
 		// its data to add the needed parts and we avoid a memory copy.
-		utils.encodeToMemory(_typeParameters, _typeParameters, true, false, _isLibrary);
+		utils.abiEncode(_typeParameters, _typeParameters, _isLibrary);
 		utils.toSizeAfterFreeMemoryPointer();
 		m_context << Instruction::RETURN;
 	}
@@ -413,9 +470,10 @@ void ContractCompiler::registerStateVariables(ContractDefinition const& _contrac
 
 void ContractCompiler::initializeStateVariables(ContractDefinition const& _contract)
 {
+	solAssert(!_contract.isLibrary(), "Tried to initialize state variables of library.");
 	for (VariableDeclaration const* variable: _contract.stateVariables())
 		if (variable->value() && !variable->isConstant())
-			ExpressionCompiler(m_context, m_optimise).appendStateVariableInitialization(*variable);
+			ExpressionCompiler(m_context, m_optimiserSettings.runOrderLiterals).appendStateVariableInitialization(*variable);
 }
 
 bool ContractCompiler::visit(VariableDeclaration const& _variableDeclaration)
@@ -428,9 +486,9 @@ bool ContractCompiler::visit(VariableDeclaration const& _variableDeclaration)
 	m_continueTags.clear();
 
 	if (_variableDeclaration.isConstant())
-		ExpressionCompiler(m_context, m_optimise).appendConstStateVariableAccessor(_variableDeclaration);
+		ExpressionCompiler(m_context, m_optimiserSettings.runOrderLiterals).appendConstStateVariableAccessor(_variableDeclaration);
 	else
-		ExpressionCompiler(m_context, m_optimise).appendStateVariableAccessor(_variableDeclaration);
+		ExpressionCompiler(m_context, m_optimiserSettings.runOrderLiterals).appendStateVariableAccessor(_variableDeclaration);
 
 	return false;
 }
@@ -442,7 +500,7 @@ bool ContractCompiler::visit(FunctionDefinition const& _function)
 	m_context.startFunction(_function);
 
 	// stack upon entry: [return address] [arg0] [arg1] ... [argn]
-	// reserve additional slots: [retarg0] ... [retargm] [localvar0] ... [localvarp]
+	// reserve additional slots: [retarg0] ... [retargm]
 
 	unsigned parametersSize = CompilerUtils::sizeOnStack(_function.parameters());
 	if (!_function.isConstructor())
@@ -456,8 +514,6 @@ bool ContractCompiler::visit(FunctionDefinition const& _function)
 
 	for (ASTPointer<VariableDeclaration const> const& variable: _function.returnParameters())
 		appendStackVariableInitialisation(*variable);
-	for (VariableDeclaration const* localVariable: _function.localVariables())
-		appendStackVariableInitialisation(*localVariable);
 
 	if (_function.isConstructor())
 		if (auto c = m_context.nextConstructor(dynamic_cast<ContractDefinition const&>(*_function.scope())))
@@ -466,12 +522,11 @@ bool ContractCompiler::visit(FunctionDefinition const& _function)
 	solAssert(m_returnTags.empty(), "");
 	m_breakTags.clear();
 	m_continueTags.clear();
-	m_stackCleanupForReturn = 0;
 	m_currentFunction = &_function;
 	m_modifierDepth = -1;
+	m_scopeStackHeight.clear();
 
 	appendModifierOrFunctionCode();
-
 	solAssert(m_returnTags.empty(), "");
 
 	// Now we need to re-shuffle the stack. For this we keep a record of the stack layout
@@ -482,14 +537,12 @@ bool ContractCompiler::visit(FunctionDefinition const& _function)
 
 	unsigned const c_argumentsSize = CompilerUtils::sizeOnStack(_function.parameters());
 	unsigned const c_returnValuesSize = CompilerUtils::sizeOnStack(_function.returnParameters());
-	unsigned const c_localVariablesSize = CompilerUtils::sizeOnStack(_function.localVariables());
 
 	vector<int> stackLayout;
 	stackLayout.push_back(c_returnValuesSize); // target of return address
 	stackLayout += vector<int>(c_argumentsSize, -1); // discard all arguments
 	for (unsigned i = 0; i < c_returnValuesSize; ++i)
 		stackLayout.push_back(i);
-	stackLayout += vector<int>(c_localVariablesSize, -1);
 
 	if (stackLayout.size() > 17)
 		BOOST_THROW_EXCEPTION(
@@ -508,38 +561,44 @@ bool ContractCompiler::visit(FunctionDefinition const& _function)
 			m_context << swapInstruction(stackLayout.size() - stackLayout.back() - 1);
 			swap(stackLayout[stackLayout.back()], stackLayout.back());
 		}
-	//@todo assert that everything is in place now
+	for (int i = 0; i < int(stackLayout.size()); ++i)
+		if (stackLayout[i] != i)
+			solAssert(false, "Invalid stack layout on cleanup.");
 
 	for (ASTPointer<VariableDeclaration const> const& variable: _function.parameters() + _function.returnParameters())
 		m_context.removeVariable(*variable);
-	for (VariableDeclaration const* localVariable: _function.localVariables())
-		m_context.removeVariable(*localVariable);
 
 	m_context.adjustStackOffset(-(int)c_returnValuesSize);
 
+	/// The constructor and the fallback function doesn't to jump out.
 	if (!_function.isConstructor())
-		m_context.appendJump(eth::AssemblyItem::JumpType::OutOfFunction);
+	{
+		solAssert(m_context.numberOfLocalVariables() == 0, "");
+		if (!_function.isFallback())
+			m_context.appendJump(eth::AssemblyItem::JumpType::OutOfFunction);
+	}
+
 	return false;
 }
 
 bool ContractCompiler::visit(InlineAssembly const& _inlineAssembly)
 {
 	unsigned startStackHeight = m_context.stackHeight();
-	julia::ExternalIdentifierAccess identifierAccess;
-	identifierAccess.resolve = [&](assembly::Identifier const& _identifier, julia::IdentifierContext, bool)
+	yul::ExternalIdentifierAccess identifierAccess;
+	identifierAccess.resolve = [&](yul::Identifier const& _identifier, yul::IdentifierContext, bool)
 	{
 		auto ref = _inlineAssembly.annotation().externalReferences.find(&_identifier);
 		if (ref == _inlineAssembly.annotation().externalReferences.end())
 			return size_t(-1);
 		return ref->second.valueSize;
 	};
-	identifierAccess.generateCode = [&](assembly::Identifier const& _identifier, julia::IdentifierContext _context, julia::AbstractAssembly& _assembly)
+	identifierAccess.generateCode = [&](yul::Identifier const& _identifier, yul::IdentifierContext _context, yul::AbstractAssembly& _assembly)
 	{
 		auto ref = _inlineAssembly.annotation().externalReferences.find(&_identifier);
 		solAssert(ref != _inlineAssembly.annotation().externalReferences.end(), "");
 		Declaration const* decl = ref->second.declaration;
 		solAssert(!!decl, "");
-		if (_context == julia::IdentifierContext::RValue)
+		if (_context == yul::IdentifierContext::RValue)
 		{
 			int const depositBefore = _assembly.stackHeight();
 			solAssert(!!decl->type(), "Type of declaration required but not yet determined.");
@@ -645,11 +704,14 @@ bool ContractCompiler::visit(InlineAssembly const& _inlineAssembly)
 		}
 	};
 	solAssert(_inlineAssembly.annotation().analysisInfo, "");
-	assembly::CodeGenerator::assemble(
+	yul::CodeGenerator::assemble(
 		_inlineAssembly.operations(),
 		*_inlineAssembly.annotation().analysisInfo,
-		m_context.nonConstAssembly(),
-		identifierAccess
+		*m_context.assemblyPtr(),
+		m_context.evmVersion(),
+		identifierAccess,
+		false,
+		m_optimiserSettings.optimizeStackAllocation
 	);
 	m_context.setStackOffset(startStackHeight);
 	return false;
@@ -680,32 +742,36 @@ bool ContractCompiler::visit(WhileStatement const& _whileStatement)
 {
 	StackHeightChecker checker(m_context);
 	CompilerContext::LocationSetter locationSetter(m_context, _whileStatement);
+
 	eth::AssemblyItem loopStart = m_context.newTag();
 	eth::AssemblyItem loopEnd = m_context.newTag();
-	m_continueTags.push_back(loopStart);
-	m_breakTags.push_back(loopEnd);
+	m_breakTags.emplace_back(loopEnd, m_context.stackHeight());
 
 	m_context << loopStart;
 
-	// While loops have the condition prepended
-	if (!_whileStatement.isDoWhile())
-	{
-		compileExpression(_whileStatement.condition());
-		m_context << Instruction::ISZERO;
-		m_context.appendConditionalJumpTo(loopEnd);
-	}
-
-	_whileStatement.body().accept(*this);
-
-	// Do-while loops have the condition appended
 	if (_whileStatement.isDoWhile())
 	{
+		eth::AssemblyItem condition = m_context.newTag();
+		m_continueTags.emplace_back(condition, m_context.stackHeight());
+
+		_whileStatement.body().accept(*this);
+
+		m_context << condition;
+		compileExpression(_whileStatement.condition());
+		m_context << Instruction::ISZERO << Instruction::ISZERO;
+		m_context.appendConditionalJumpTo(loopStart);
+	}
+	else
+	{
+		m_continueTags.emplace_back(loopStart, m_context.stackHeight());
 		compileExpression(_whileStatement.condition());
 		m_context << Instruction::ISZERO;
 		m_context.appendConditionalJumpTo(loopEnd);
-	}
 
-	m_context.appendJumpTo(loopStart);
+		_whileStatement.body().accept(*this);
+
+		m_context.appendJumpTo(loopStart);
+	}
 	m_context << loopEnd;
 
 	m_continueTags.pop_back();
@@ -722,12 +788,14 @@ bool ContractCompiler::visit(ForStatement const& _forStatement)
 	eth::AssemblyItem loopStart = m_context.newTag();
 	eth::AssemblyItem loopEnd = m_context.newTag();
 	eth::AssemblyItem loopNext = m_context.newTag();
-	m_continueTags.push_back(loopNext);
-	m_breakTags.push_back(loopEnd);
+
+	storeStackHeight(&_forStatement);
 
 	if (_forStatement.initializationExpression())
 		_forStatement.initializationExpression()->accept(*this);
 
+	m_breakTags.emplace_back(loopEnd, m_context.stackHeight());
+	m_continueTags.emplace_back(loopNext, m_context.stackHeight());
 	m_context << loopStart;
 
 	// if there is no terminating condition in for, default is to always be true
@@ -747,10 +815,15 @@ bool ContractCompiler::visit(ForStatement const& _forStatement)
 		_forStatement.loopExpression()->accept(*this);
 
 	m_context.appendJumpTo(loopStart);
+
 	m_context << loopEnd;
 
 	m_continueTags.pop_back();
 	m_breakTags.pop_back();
+
+	// For the case where no break/return is executed:
+	// loop initialization variables have to be freed
+	popScopedVariables(&_forStatement);
 
 	checker.check();
 	return false;
@@ -759,16 +832,16 @@ bool ContractCompiler::visit(ForStatement const& _forStatement)
 bool ContractCompiler::visit(Continue const& _continueStatement)
 {
 	CompilerContext::LocationSetter locationSetter(m_context, _continueStatement);
-	if (!m_continueTags.empty())
-		m_context.appendJumpTo(m_continueTags.back());
+	solAssert(!m_continueTags.empty(), "");
+	CompilerUtils(m_context).popAndJump(m_continueTags.back().second, m_continueTags.back().first);
 	return false;
 }
 
 bool ContractCompiler::visit(Break const& _breakStatement)
 {
 	CompilerContext::LocationSetter locationSetter(m_context, _breakStatement);
-	if (!m_breakTags.empty())
-		m_context.appendJumpTo(m_breakTags.back());
+	solAssert(!m_breakTags.empty(), "");
+	CompilerUtils(m_context).popAndJump(m_breakTags.back().second, m_breakTags.back().first);
 	return false;
 }
 
@@ -786,7 +859,7 @@ bool ContractCompiler::visit(Return const& _return)
 
 		TypePointer expectedType;
 		if (expression->annotation().type->category() == Type::Category::Tuple || types.size() != 1)
-			expectedType = make_shared<TupleType>(types);
+			expectedType = TypeProvider::tuple(move(types));
 		else
 			expectedType = types.front();
 		compileExpression(*expression, expectedType);
@@ -794,48 +867,59 @@ bool ContractCompiler::visit(Return const& _return)
 		for (auto const& retVariable: boost::adaptors::reverse(returnParameters))
 			CompilerUtils(m_context).moveToStackVariable(*retVariable);
 	}
-	for (unsigned i = 0; i < m_stackCleanupForReturn; ++i)
-		m_context << Instruction::POP;
-	m_context.appendJumpTo(m_returnTags.back());
-	m_context.adjustStackOffset(m_stackCleanupForReturn);
+
+	CompilerUtils(m_context).popAndJump(m_returnTags.back().second, m_returnTags.back().first);
 	return false;
 }
 
-bool ContractCompiler::visit(Throw const& _throw)
+bool ContractCompiler::visit(Throw const&)
 {
-	CompilerContext::LocationSetter locationSetter(m_context, _throw);
-	// Do not send back an error detail.
-	m_context.appendRevert();
+	solAssert(false, "Throw statement is disallowed.");
+	return false;
+}
+
+bool ContractCompiler::visit(EmitStatement const& _emit)
+{
+	CompilerContext::LocationSetter locationSetter(m_context, _emit);
+	StackHeightChecker checker(m_context);
+	compileExpression(_emit.eventCall());
+	checker.check();
 	return false;
 }
 
 bool ContractCompiler::visit(VariableDeclarationStatement const& _variableDeclarationStatement)
 {
-	StackHeightChecker checker(m_context);
 	CompilerContext::LocationSetter locationSetter(m_context, _variableDeclarationStatement);
+
+	// Local variable slots are reserved when their declaration is visited,
+	// and freed in the end of their scope.
+	for (auto _decl: _variableDeclarationStatement.declarations())
+		if (_decl)
+			appendStackVariableInitialisation(*_decl);
+
+	StackHeightChecker checker(m_context);
 	if (Expression const* expression = _variableDeclarationStatement.initialValue())
 	{
 		CompilerUtils utils(m_context);
 		compileExpression(*expression);
 		TypePointers valueTypes;
-		if (auto tupleType = dynamic_cast<TupleType const*>(expression->annotation().type.get()))
+		if (auto tupleType = dynamic_cast<TupleType const*>(expression->annotation().type))
 			valueTypes = tupleType->components();
 		else
 			valueTypes = TypePointers{expression->annotation().type};
-		auto const& assignments = _variableDeclarationStatement.annotation().assignments;
-		solAssert(assignments.size() == valueTypes.size(), "");
-		for (size_t i = 0; i < assignments.size(); ++i)
+		auto const& declarations = _variableDeclarationStatement.declarations();
+		solAssert(declarations.size() == valueTypes.size(), "");
+		for (size_t i = 0; i < declarations.size(); ++i)
 		{
-			size_t j = assignments.size() - i - 1;
+			size_t j = declarations.size() - i - 1;
 			solAssert(!!valueTypes[j], "");
-			VariableDeclaration const* varDecl = assignments[j];
-			if (!varDecl)
-				utils.popStackElement(*valueTypes[j]);
-			else
+			if (VariableDeclaration const* varDecl = declarations[j].get())
 			{
 				utils.convertType(*valueTypes[j], *varDecl->annotation().type);
 				utils.moveToStackVariable(*varDecl);
 			}
+			else
+				utils.popStackElement(*valueTypes[j]);
 		}
 	}
 	checker.check();
@@ -862,6 +946,18 @@ bool ContractCompiler::visit(PlaceholderStatement const& _placeholderStatement)
 	return true;
 }
 
+bool ContractCompiler::visit(Block const& _block)
+{
+	storeStackHeight(&_block);
+	return true;
+}
+
+void ContractCompiler::endVisit(Block const& _block)
+{
+	// Frees local variables declared in the scope of this block.
+	popScopedVariables(&_block);
+}
+
 void ContractCompiler::appendMissingFunctions()
 {
 	while (Declaration const* function = m_context.nextFunctionToCompile())
@@ -871,6 +967,15 @@ void ContractCompiler::appendMissingFunctions()
 		solAssert(m_context.nextFunctionToCompile() != function, "Compiled the wrong function?");
 	}
 	m_context.appendMissingLowLevelFunctions();
+	auto abiFunctions = m_context.abiFunctions().requestedFunctions();
+	if (!abiFunctions.first.empty())
+		m_context.appendInlineAssembly(
+			"{" + move(abiFunctions.first) + "}",
+			{},
+			abiFunctions.second,
+			true,
+			m_optimiserSettings
+		);
 }
 
 void ContractCompiler::appendModifierOrFunctionCode()
@@ -896,36 +1001,37 @@ void ContractCompiler::appendModifierOrFunctionCode()
 			appendModifierOrFunctionCode();
 		else
 		{
-			ModifierDefinition const& modifier = m_context.functionModifier(modifierInvocation->name()->name());
+			ModifierDefinition const& nonVirtualModifier = dynamic_cast<ModifierDefinition const&>(
+				*modifierInvocation->name()->annotation().referencedDeclaration
+			);
+			ModifierDefinition const& modifier = m_context.resolveVirtualFunctionModifier(nonVirtualModifier);
 			CompilerContext::LocationSetter locationSetter(m_context, modifier);
-			solAssert(modifier.parameters().size() == modifierInvocation->arguments().size(), "");
+			std::vector<ASTPointer<Expression>> const& modifierArguments =
+				modifierInvocation->arguments() ? *modifierInvocation->arguments() : std::vector<ASTPointer<Expression>>();
+
+			solAssert(modifier.parameters().size() == modifierArguments.size(), "");
 			for (unsigned i = 0; i < modifier.parameters().size(); ++i)
 			{
 				m_context.addVariable(*modifier.parameters()[i]);
 				addedVariables.push_back(modifier.parameters()[i].get());
 				compileExpression(
-					*modifierInvocation->arguments()[i],
+					*modifierArguments[i],
 					modifier.parameters()[i]->annotation().type
 				);
 			}
-			for (VariableDeclaration const* localVariable: modifier.localVariables())
-				appendStackVariableInitialisation(*localVariable);
 
-			stackSurplus =
-				CompilerUtils::sizeOnStack(modifier.parameters()) +
-				CompilerUtils::sizeOnStack(modifier.localVariables());
+			stackSurplus = CompilerUtils::sizeOnStack(modifier.parameters());
 			codeBlock = &modifier.body();
 		}
 	}
 
 	if (codeBlock)
 	{
-		m_returnTags.push_back(m_context.newTag());
-
+		m_returnTags.emplace_back(m_context.newTag(), m_context.stackHeight());
 		codeBlock->accept(*this);
 
 		solAssert(!m_returnTags.empty(), "");
-		m_context << m_returnTags.back();
+		m_context << m_returnTags.back().first;
 		m_returnTags.pop_back();
 
 		CompilerUtils(m_context).popStackSlots(stackSurplus);
@@ -944,31 +1050,25 @@ void ContractCompiler::appendStackVariableInitialisation(VariableDeclaration con
 
 void ContractCompiler::compileExpression(Expression const& _expression, TypePointer const& _targetType)
 {
-	ExpressionCompiler expressionCompiler(m_context, m_optimise);
+	ExpressionCompiler expressionCompiler(m_context, m_optimiserSettings.runOrderLiterals);
 	expressionCompiler.compile(_expression);
 	if (_targetType)
 		CompilerUtils(m_context).convertType(*_expression.annotation().type, *_targetType);
 }
 
-eth::AssemblyPointer ContractCompiler::cloneRuntime()
+void ContractCompiler::popScopedVariables(ASTNode const* _node)
 {
-	eth::Assembly a;
-	a << Instruction::CALLDATASIZE;
-	a << u256(0) << Instruction::DUP1 << Instruction::CALLDATACOPY;
-	//@todo adjust for larger return values, make this dynamic.
-	a << u256(0x20) << u256(0) << Instruction::CALLDATASIZE;
-	a << u256(0);
-	// this is the address which has to be substituted by the linker.
-	//@todo implement as special "marker" AssemblyItem.
-	a << u256("0xcafecafecafecafecafecafecafecafecafecafe");
-	a << u256(eth::GasCosts::callGas + 10) << Instruction::GAS << Instruction::SUB;
-	a << Instruction::DELEGATECALL;
-	//Propagate error condition (if DELEGATECALL pushes 0 on stack).
-	a << Instruction::ISZERO;
-	a << Instruction::ISZERO;
-	eth::AssemblyItem afterTag = a.appendJumpI().tag();
-	a << Instruction::INVALID << afterTag;
-	//@todo adjust for larger return values, make this dynamic.
-	a << u256(0x20) << u256(0) << Instruction::RETURN;
-	return make_shared<eth::Assembly>(a);
+	unsigned blockHeight = m_scopeStackHeight.at(m_modifierDepth).at(_node);
+	m_context.removeVariablesAboveStackHeight(blockHeight);
+	solAssert(m_context.stackHeight() >= blockHeight, "");
+	unsigned stackDiff = m_context.stackHeight() - blockHeight;
+	CompilerUtils(m_context).popStackSlots(stackDiff);
+	m_scopeStackHeight[m_modifierDepth].erase(_node);
+	if (m_scopeStackHeight[m_modifierDepth].empty())
+		m_scopeStackHeight.erase(m_modifierDepth);
+}
+
+void ContractCompiler::storeStackHeight(ASTNode const* _node)
+{
+	m_scopeStackHeight[m_modifierDepth][_node] = m_context.stackHeight();
 }

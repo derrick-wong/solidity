@@ -22,10 +22,12 @@
 
 #pragma once
 
-#include <ostream>
-#include <functional>
 #include <libsolidity/codegen/CompilerContext.h>
+#include <libsolidity/interface/OptimiserSettings.h>
+#include <liblangutil/EVMVersion.h>
 #include <libevmasm/Assembly.h>
+#include <functional>
+#include <ostream>
 
 namespace dev {
 namespace solidity {
@@ -33,32 +35,38 @@ namespace solidity {
 class Compiler
 {
 public:
-	explicit Compiler(bool _optimize = false, unsigned _runs = 200):
-		m_optimize(_optimize),
-		m_optimizeRuns(_runs),
-		m_runtimeContext(),
-		m_context(&m_runtimeContext)
+	explicit Compiler(langutil::EVMVersion _evmVersion, OptimiserSettings _optimiserSettings):
+		m_optimiserSettings(std::move(_optimiserSettings)),
+		m_runtimeContext(_evmVersion),
+		m_context(_evmVersion, &m_runtimeContext)
 	{ }
 
+	/// Compiles a contract.
+	/// @arg _metadata contains the to be injected metadata CBOR
 	void compileContract(
 		ContractDefinition const& _contract,
-		std::map<ContractDefinition const*, eth::Assembly const*> const& _contracts,
+		std::map<ContractDefinition const*, std::shared_ptr<Compiler const>> const& _otherCompilers,
 		bytes const& _metadata
 	);
-	/// Compiles a contract that uses DELEGATECALL to call into a pre-deployed version of the given
-	/// contract at runtime, but contains the full creation-time code.
-	void compileClone(
-		ContractDefinition const& _contract,
-		std::map<ContractDefinition const*, eth::Assembly const*> const& _contracts
-	);
-	eth::Assembly const& assembly() { return m_context.assembly(); }
-	eth::LinkerObject assembledObject() { return m_context.assembledObject(); }
-	eth::LinkerObject runtimeObject() { return m_context.assembledRuntimeObject(m_runtimeSub); }
+	/// @returns Entire assembly.
+	eth::Assembly const& assembly() const { return m_context.assembly(); }
+	/// @returns Entire assembly as a shared pointer to non-const.
+	std::shared_ptr<eth::Assembly> assemblyPtr() const { return m_context.assemblyPtr(); }
+	/// @returns Runtime assembly.
+	std::shared_ptr<eth::Assembly> runtimeAssemblyPtr() const;
+	/// @returns The entire assembled object (with constructor).
+	eth::LinkerObject assembledObject() const { return m_context.assembledObject(); }
+	/// @returns Only the runtime object (without constructor).
+	eth::LinkerObject runtimeObject() const { return m_context.assembledRuntimeObject(m_runtimeSub); }
 	/// @arg _sourceCodes is the map of input files to source code strings
-	/// @arg _inJsonFromat shows whether the out should be in Json format
-	Json::Value streamAssembly(std::ostream& _stream, StringMap const& _sourceCodes = StringMap(), bool _inJsonFormat = false) const
+	std::string assemblyString(StringMap const& _sourceCodes = StringMap()) const
 	{
-		return m_context.streamAssembly(_stream, _sourceCodes, _inJsonFormat);
+		return m_context.assemblyString(_sourceCodes);
+	}
+	/// @arg _sourceCodes is the map of input files to source code strings
+	Json::Value assemblyJSON(StringMap const& _sourceCodes = StringMap()) const
+	{
+		return m_context.assemblyJSON(_sourceCodes);
 	}
 	/// @returns Assembly items of the normal compiler context
 	eth::AssemblyItems const& assemblyItems() const { return m_context.assembly().items(); }
@@ -70,8 +78,7 @@ public:
 	eth::AssemblyItem functionEntryLabel(FunctionDefinition const& _function) const;
 
 private:
-	bool const m_optimize;
-	unsigned const m_optimizeRuns;
+	OptimiserSettings const m_optimiserSettings;
 	CompilerContext m_runtimeContext;
 	size_t m_runtimeSub = size_t(-1); ///< Identifier of the runtime sub-assembly, if present.
 	CompilerContext m_context;

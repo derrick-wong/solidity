@@ -19,18 +19,18 @@
  * @date 2014
  */
 
-#include "CompilerState.h"
-#include "CodeFragment.h"
+#include <liblll/CompilerState.h>
+#include <liblll/CodeFragment.h>
 
 using namespace std;
 using namespace dev;
-using namespace dev::eth;
+using namespace dev::lll;
 
 CompilerState::CompilerState()
 {
 }
 
-CodeFragment const& CompilerState::getDef(std::string const& _s)
+CodeFragment const& CompilerState::getDef(std::string const& _s) const
 {
 	if (defs.count(_s))
 		return defs.at(_s);
@@ -44,8 +44,10 @@ CodeFragment const& CompilerState::getDef(std::string const& _s)
 
 void CompilerState::populateStandard()
 {
-	static const string s = "{"
+	static string const s = "{"
 	"(def 'panic () (asm INVALID))"
+	// Alternative macro version of alloc, which is currently implemented in the parser
+	// "(def 'alloc (n) (raw (msize) (when n (pop (mload (+ (msize) (& (- n 1) (~ 0x1f))))))))"
 	"(def 'allgas (- (gas) 21))"
 	"(def 'send (to value) (call allgas to value 0 0 0 0))"
 	"(def 'send (gaslimit to value) (call gaslimit to value 0 0 0 0))"
@@ -80,5 +82,5 @@ void CompilerState::populateStandard()
 	"(def 'shl (val shift) (mul val (exp 2 shift)))"
 	"(def 'shr (val shift) (div val (exp 2 shift)))"
 	"}";
-	CodeFragment::compile(s, *this);
+	CodeFragment::compile(s, *this, CodeFragment::ReadCallback());
 }

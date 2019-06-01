@@ -21,18 +21,23 @@
 
 #pragma once
 
+#include <libdevcore/Common.h>
+
+#include <liblangutil/EVMVersion.h>
+
 #include <string>
 #include <vector>
-#include <libdevcore/Common.h>
 
 namespace dev
 {
-namespace eth
+namespace lll
 {
 
-std::string parseLLL(std::string const& _src);
-std::string compileLLLToAsm(std::string const& _src, bool _opt = true, std::vector<std::string>* _errors = nullptr);
-bytes compileLLL(std::string const& _src, bool _opt = true, std::vector<std::string>* _errors = nullptr);
+using ReadCallback = std::function<std::string(std::string const&)>;
+
+std::string parseLLL(std::string _src);
+std::string compileLLLToAsm(std::string _src, langutil::EVMVersion _evmVersion, bool _opt = true, std::vector<std::string>* _errors = nullptr, ReadCallback const& _readFile = ReadCallback());
+bytes compileLLL(std::string _src, langutil::EVMVersion _evmVersion, bool _opt = true, std::vector<std::string>* _errors = nullptr, ReadCallback const& _readFile = ReadCallback());
 
 }
 }

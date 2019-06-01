@@ -1,18 +1,18 @@
 /*
-    This file is part of solidity.
+	This file is part of solidity.
 
-    solidity is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+	solidity is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
 
-    solidity is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	solidity is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with solidity.  If not, see <http://www.gnu.org/licenses/>.
+	You should have received a copy of the GNU General Public License
+	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
 */
 /**
  * @author Christian <c@ethdev.com>
@@ -22,12 +22,14 @@
  */
 
 #include <libsolidity/analysis/DocStringAnalyser.h>
+
 #include <libsolidity/ast/AST.h>
-#include <libsolidity/interface/ErrorReporter.h>
 #include <libsolidity/parsing/DocStringParser.h>
+#include <liblangutil/ErrorReporter.h>
 
 using namespace std;
 using namespace dev;
+using namespace langutil;
 using namespace dev::solidity;
 
 bool DocStringAnalyser::analyseDocStrings(SourceUnit const& _sourceUnit)
@@ -38,53 +40,42 @@ bool DocStringAnalyser::analyseDocStrings(SourceUnit const& _sourceUnit)
 	return !m_errorOccured;
 }
 
-bool DocStringAnalyser::visit(ContractDefinition const& _node)
+bool DocStringAnalyser::visit(ContractDefinition const& _contract)
 {
-	static const set<string> validTags = set<string>{"author", "title", "dev", "notice", "why3"};
-	parseDocStrings(_node, _node.annotation(), validTags, "contracts");
+	static set<string> const validTags = set<string>{"author", "title", "dev", "notice"};
+	parseDocStrings(_contract, _contract.annotation(), validTags, "contracts");
 
 	return true;
 }
 
-bool DocStringAnalyser::visit(FunctionDefinition const& _node)
+bool DocStringAnalyser::visit(FunctionDefinition const& _function)
 {
-	handleCallable(_node, _node, _node.annotation());
+	if (_function.isConstructor())
+		handleConstructor(_function, _function, _function.annotation());
+	else
+		handleCallable(_function, _function, _function.annotation());
 	return true;
 }
 
-bool DocStringAnalyser::visit(ModifierDefinition const& _node)
+bool DocStringAnalyser::visit(ModifierDefinition const& _modifier)
 {
-	handleCallable(_node, _node, _node.annotation());
-
-	return true;
-}
-
-bool DocStringAnalyser::visit(EventDefinition const& _node)
-{
-	handleCallable(_node, _node, _node.annotation());
+	handleCallable(_modifier, _modifier, _modifier.annotation());
 
 	return true;
 }
 
-bool DocStringAnalyser::visitNode(ASTNode const& _node)
+bool DocStringAnalyser::visit(EventDefinition const& _event)
 {
-	if (auto node = dynamic_cast<Statement const*>(&_node))
-	{
-		static const set<string> validTags = {"why3"};
-		parseDocStrings(*node, node->annotation(), validTags, "statements");
-	}
+	handleCallable(_event, _event, _event.annotation());
+
 	return true;
 }
 
-void DocStringAnalyser::handleCallable(
+void DocStringAnalyser::checkParameters(
 	CallableDeclaration const& _callable,
-	Documented const& _node,
 	DocumentedAnnotation& _annotation
 )
 {
-	static const set<string> validTags = set<string>{"author", "dev", "notice", "return", "param", "why3"};
-	parseDocStrings(_node, _annotation, validTags, "functions");
-
 	set<string> validParams;
 	for (auto const& p: _callable.parameters())
 		validParams.insert(p->name());
@@ -99,6 +90,29 @@ void DocStringAnalyser::handleCallable(
 				i->second.paramName +
 				"\" not found in the parameter list of the function."
 			);
+
+}
+
+void DocStringAnalyser::handleConstructor(
+	CallableDeclaration const& _callable,
+	Documented const& _node,
+	DocumentedAnnotation& _annotation
+)
+{
+	static set<string> const validTags = set<string>{"author", "dev", "notice", "param"};
+	parseDocStrings(_node, _annotation, validTags, "constructor");
+	checkParameters(_callable, _annotation);
+}
+
+void DocStringAnalyser::handleCallable(
+	CallableDeclaration const& _callable,
+	Documented const& _node,
+	DocumentedAnnotation& _annotation
+)
+{
+	static set<string> const validTags = set<string>{"author", "dev", "notice", "return", "param"};
+	parseDocStrings(_node, _annotation, validTags, "functions");
+	checkParameters(_callable, _annotation);
 }
 
 void DocStringAnalyser::parseDocStrings(

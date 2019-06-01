@@ -31,32 +31,32 @@
 
 using namespace std;
 using namespace dev;
-using namespace dev::solidity;
-using namespace dev::eth;
+using namespace dev::lll;
 
 static string const VersionString =
-        string(ETH_PROJECT_VERSION) +
-        (string(SOL_VERSION_PRERELEASE).empty() ? "" : "-" + string(SOL_VERSION_PRERELEASE)) +
-        (string(SOL_VERSION_BUILDINFO).empty() ? "" : "+" + string(SOL_VERSION_BUILDINFO));
+	string(ETH_PROJECT_VERSION) +
+	(string(SOL_VERSION_PRERELEASE).empty() ? "" : "-" + string(SOL_VERSION_PRERELEASE)) +
+	(string(SOL_VERSION_BUILDINFO).empty() ? "" : "+" + string(SOL_VERSION_BUILDINFO));
 
-void help()
+static void help()
 {
 	cout
 		<< "Usage lllc [OPTIONS] <file>" << endl
-        << "Options:" << endl
+		<< "Options:" << endl
 		<< "    -b,--binary  Parse, compile and assemble; output byte code in binary." << endl
 		<< "    -x,--hex  Parse, compile and assemble; output byte code in hex." << endl
 		<< "    -a,--assembly  Only parse and compile; show assembly." << endl
 		<< "    -t,--parse-tree  Only parse; show parse tree." << endl
 		<< "    -o,--optimise  Turn on/off the optimiser; off by default." << endl
+		<< "    -d,--disassemble  Disassemble input into an opcode stream." << endl
 		<< "    -h,--help  Show this help message and exit." << endl
 		<< "    -V,--version  Show the version and exit." << endl;
-        exit(0);
+	exit(0);
 }
 
-void version()
+static void version()
 {
-	cout << "LLLC, the Lovely Little Language Compiler " << endl;
+	cout << "LLLC, the Lovely Little Language Compiler" << endl;
 	cout << "Version: " << VersionString << endl;
 	exit(0);
 }
@@ -74,7 +74,7 @@ specified default locale if it is valid, and if not then it will modify the
 environment the process is running in to use a sensible default. This also means
 that users do not need to install language packs for their OS.
 */
-void setDefaultOrCLocale()
+static void setDefaultOrCLocale()
 {
 #if __unix__
 	if (!std::setlocale(LC_ALL, ""))
@@ -118,39 +118,39 @@ int main(int argc, char** argv)
 
 	string src;
 	if (infile.empty())
-	{
-		string s;
-		while (!cin.eof())
-		{
-			getline(cin, s);
-			src.append(s);
-		}
-	}
+		src = readStandardInput();
 	else
-		src = contentsString(infile);
+		src = readFileAsString(infile);
 
 	vector<string> errors;
 	if (src.empty())
+	{
 		errors.push_back("Empty file.");
+	}
 	else if (mode == Disassemble)
 	{
-		cout << disassemble(fromHex(src)) << endl;
+		cout << dev::eth::disassemble(fromHex(src)) << endl;
 	}
 	else if (mode == Binary || mode == Hex)
 	{
-		auto bs = compileLLL(src, optimise ? true : false, &errors);
+		auto bs = compileLLL(std::move(src), langutil::EVMVersion{}, optimise ? true : false, &errors, readFileAsString);
 		if (mode == Hex)
 			cout << toHex(bs) << endl;
 		else if (mode == Binary)
 			cout.write((char const*)bs.data(), bs.size());
 	}
 	else if (mode == ParseTree)
-		cout << parseLLL(src) << endl;
+	{
+		cout << parseLLL(std::move(src)) << endl;
+	}
 	else if (mode == Assembly)
-		cout << compileLLLToAsm(src, optimise ? true : false, &errors) << endl;
+	{
+		cout << compileLLLToAsm(std::move(src), langutil::EVMVersion{}, optimise ? true : false, &errors, readFileAsString) << endl;
+	}
+
 	for (auto const& i: errors)
 		cerr << i << endl;
-	if ( errors.size() )
+	if (errors.size())
 		return 1;
 	return 0;
 }

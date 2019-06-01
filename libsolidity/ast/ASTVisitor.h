@@ -1,18 +1,18 @@
 /*
-    This file is part of solidity.
+	This file is part of solidity.
 
-    solidity is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+	solidity is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
 
-    solidity is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	solidity is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with solidity.  If not, see <http://www.gnu.org/licenses/>.
+	You should have received a copy of the GNU General Public License
+	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
 */
 /**
  * @author Christian <c@ethdev.com>
@@ -22,10 +22,10 @@
 
 #pragma once
 
-#include <string>
-#include <functional>
-#include <vector>
 #include <libsolidity/ast/AST.h>
+#include <functional>
+#include <string>
+#include <vector>
 
 namespace dev
 {
@@ -43,6 +43,7 @@ namespace solidity
 class ASTVisitor
 {
 public:
+	virtual ~ASTVisitor() = default;
 	virtual bool visit(SourceUnit& _node) { return visitNode(_node); }
 	virtual bool visit(PragmaDirective& _node) { return visitNode(_node); }
 	virtual bool visit(ImportDirective& _node) { return visitNode(_node); }
@@ -58,7 +59,6 @@ public:
 	virtual bool visit(ModifierDefinition& _node) { return visitNode(_node); }
 	virtual bool visit(ModifierInvocation& _node) { return visitNode(_node); }
 	virtual bool visit(EventDefinition& _node) { return visitNode(_node); }
-	virtual bool visit(TypeName& _node) { return visitNode(_node); }
 	virtual bool visit(ElementaryTypeName& _node) { return visitNode(_node); }
 	virtual bool visit(UserDefinedTypeName& _node) { return visitNode(_node); }
 	virtual bool visit(FunctionTypeName& _node) { return visitNode(_node); }
@@ -74,6 +74,7 @@ public:
 	virtual bool visit(Break& _node) { return visitNode(_node); }
 	virtual bool visit(Return& _node) { return visitNode(_node); }
 	virtual bool visit(Throw& _node) { return visitNode(_node); }
+	virtual bool visit(EmitStatement& _node) { return visitNode(_node); }
 	virtual bool visit(VariableDeclarationStatement& _node) { return visitNode(_node); }
 	virtual bool visit(ExpressionStatement& _node) { return visitNode(_node); }
 	virtual bool visit(Conditional& _node) { return visitNode(_node); }
@@ -104,7 +105,6 @@ public:
 	virtual void endVisit(ModifierDefinition& _node) { endVisitNode(_node); }
 	virtual void endVisit(ModifierInvocation& _node) { endVisitNode(_node); }
 	virtual void endVisit(EventDefinition& _node) { endVisitNode(_node); }
-	virtual void endVisit(TypeName& _node) { endVisitNode(_node); }
 	virtual void endVisit(ElementaryTypeName& _node) { endVisitNode(_node); }
 	virtual void endVisit(UserDefinedTypeName& _node) { endVisitNode(_node); }
 	virtual void endVisit(FunctionTypeName& _node) { endVisitNode(_node); }
@@ -120,6 +120,7 @@ public:
 	virtual void endVisit(Break& _node) { endVisitNode(_node); }
 	virtual void endVisit(Return& _node) { endVisitNode(_node); }
 	virtual void endVisit(Throw& _node) { endVisitNode(_node); }
+	virtual void endVisit(EmitStatement& _node) { endVisitNode(_node); }
 	virtual void endVisit(VariableDeclarationStatement& _node) { endVisitNode(_node); }
 	virtual void endVisit(ExpressionStatement& _node) { endVisitNode(_node); }
 	virtual void endVisit(Conditional& _node) { endVisitNode(_node); }
@@ -147,6 +148,7 @@ protected:
 class ASTConstVisitor
 {
 public:
+	virtual ~ASTConstVisitor() = default;
 	virtual bool visit(SourceUnit const& _node) { return visitNode(_node); }
 	virtual bool visit(PragmaDirective const& _node) { return visitNode(_node); }
 	virtual bool visit(ImportDirective const& _node) { return visitNode(_node); }
@@ -162,7 +164,6 @@ public:
 	virtual bool visit(ModifierDefinition const& _node) { return visitNode(_node); }
 	virtual bool visit(ModifierInvocation const& _node) { return visitNode(_node); }
 	virtual bool visit(EventDefinition const& _node) { return visitNode(_node); }
-	virtual bool visit(TypeName const& _node) { return visitNode(_node); }
 	virtual bool visit(ElementaryTypeName const& _node) { return visitNode(_node); }
 	virtual bool visit(UserDefinedTypeName const& _node) { return visitNode(_node); }
 	virtual bool visit(FunctionTypeName const& _node) { return visitNode(_node); }
@@ -178,6 +179,7 @@ public:
 	virtual bool visit(Break const& _node) { return visitNode(_node); }
 	virtual bool visit(Return const& _node) { return visitNode(_node); }
 	virtual bool visit(Throw const& _node) { return visitNode(_node); }
+	virtual bool visit(EmitStatement const& _node) { return visitNode(_node); }
 	virtual bool visit(VariableDeclarationStatement const& _node) { return visitNode(_node); }
 	virtual bool visit(ExpressionStatement const& _node) { return visitNode(_node); }
 	virtual bool visit(Conditional const& _node) { return visitNode(_node); }
@@ -208,7 +210,6 @@ public:
 	virtual void endVisit(ModifierDefinition const& _node) { endVisitNode(_node); }
 	virtual void endVisit(ModifierInvocation const& _node) { endVisitNode(_node); }
 	virtual void endVisit(EventDefinition const& _node) { endVisitNode(_node); }
-	virtual void endVisit(TypeName const& _node) { endVisitNode(_node); }
 	virtual void endVisit(ElementaryTypeName const& _node) { endVisitNode(_node); }
 	virtual void endVisit(UserDefinedTypeName const& _node) { endVisitNode(_node); }
 	virtual void endVisit(FunctionTypeName const& _node) { endVisitNode(_node); }
@@ -224,6 +225,7 @@ public:
 	virtual void endVisit(Break const& _node) { endVisitNode(_node); }
 	virtual void endVisit(Return const& _node) { endVisitNode(_node); }
 	virtual void endVisit(Throw const& _node) { endVisitNode(_node); }
+	virtual void endVisit(EmitStatement const& _node) { endVisitNode(_node); }
 	virtual void endVisit(VariableDeclarationStatement const& _node) { endVisitNode(_node); }
 	virtual void endVisit(ExpressionStatement const& _node) { endVisitNode(_node); }
 	virtual void endVisit(Conditional const& _node) { endVisitNode(_node); }
@@ -260,8 +262,8 @@ public:
 	): m_onVisit(_onVisit), m_onEndVisit(_onEndVisit) {}
 
 protected:
-	virtual bool visitNode(ASTNode const& _n) override { return m_onVisit ? m_onVisit(_n) : true; }
-	virtual void endVisitNode(ASTNode const& _n) override { m_onEndVisit(_n); }
+	bool visitNode(ASTNode const& _n) override { return m_onVisit ? m_onVisit(_n) : true; }
+	void endVisitNode(ASTNode const& _n) override { m_onEndVisit(_n); }
 
 private:
 	std::function<bool(ASTNode const&)> m_onVisit;

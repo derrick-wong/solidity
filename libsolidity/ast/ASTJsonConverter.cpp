@@ -1,33 +1,34 @@
 /*
-    This file is part of solidity.
+	This file is part of solidity.
 
-    solidity is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+	solidity is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
 
-    solidity is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	solidity is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with solidity.  If not, see <http://www.gnu.org/licenses/>.
+	You should have received a copy of the GNU General Public License
+	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
 */
 /**
- * @author Lefteris <lefteris@ethdev.com>
- * @date 2015
+ * @date 2017
  * Converts the AST into json format
  */
 
 #include <libsolidity/ast/ASTJsonConverter.h>
-#include <boost/algorithm/string/join.hpp>
-#include <libdevcore/UTF8.h>
+
 #include <libsolidity/ast/AST.h>
-#include <libsolidity/inlineasm/AsmData.h>
-#include <libsolidity/inlineasm/AsmPrinter.h>
+#include <libyul/AsmData.h>
+#include <libyul/AsmPrinter.h>
+#include <libdevcore/UTF8.h>
+#include <boost/algorithm/string/join.hpp>
 
 using namespace std;
+using namespace langutil;
 
 namespace dev
 {
@@ -81,28 +82,30 @@ void ASTJsonConverter::setJsonNode(
 			(_nodeType == "InlineAssembly") ||
 			(_nodeType == "Throw")
 		)
-		{
-			Json::Value children(Json::arrayValue);
-			m_currentValue["children"] = children;
-		}
+			m_currentValue["children"] = Json::arrayValue;
 
 		for (auto& e: _attributes)
 		{
-			if (
-				(!e.second.isNull()) &&
-					(
-					(e.second.isObject() && e.second.isMember("name")) ||
-					(e.second.isArray() && e.second[0].isObject() && e.second[0].isMember("name")) ||
-					(e.first == "declarations") // (in the case (_,x)= ... there's a nullpointer at [0]
-					)
-			)
+			if ((!e.second.isNull()) && (
+				(e.second.isObject() && e.second.isMember("name")) ||
+				(e.second.isArray() && e.second[0].isObject() && e.second[0].isMember("name")) ||
+				(e.first == "declarations") // (in the case (_,x)= ... there's a nullpointer at [0]
+			))
 			{
 				if (e.second.isObject())
-					m_currentValue["children"].append(std::move(e.second));
+				{
+					if (!m_currentValue["children"].isArray())
+						m_currentValue["children"] = Json::arrayValue;
+					appendMove(m_currentValue["children"], std::move(e.second));
+				}
 				if (e.second.isArray())
 					for (auto& child: e.second)
 						if (!child.isNull())
-							m_currentValue["children"].append(std::move(child));
+						{
+							if (!m_currentValue["children"].isArray())
+								m_currentValue["children"] = Json::arrayValue;
+							appendMove(m_currentValue["children"], std::move(child));
+						}
 			}
 			else
 			{
@@ -120,34 +123,34 @@ void ASTJsonConverter::setJsonNode(
 string ASTJsonConverter::sourceLocationToString(SourceLocation const& _location) const
 {
 	int sourceIndex{-1};
-	if (_location.sourceName && m_sourceIndices.count(*_location.sourceName))
-		sourceIndex = m_sourceIndices.at(*_location.sourceName);
+	if (_location.source && m_sourceIndices.count(_location.source->name()))
+		sourceIndex = m_sourceIndices.at(_location.source->name());
 	int length = -1;
 	if (_location.start >= 0 && _location.end >= 0)
 		length = _location.end - _location.start;
-	return std::to_string(_location.start) + ":" + std::to_string(length) + ":" + std::to_string(sourceIndex);
+	return to_string(_location.start) + ":" + to_string(length) + ":" + to_string(sourceIndex);
 }
 
-string ASTJsonConverter::namePathToString(std::vector<ASTString> const& _namePath) const
+string ASTJsonConverter::namePathToString(std::vector<ASTString> const& _namePath)
 {
 	return boost::algorithm::join(_namePath, ".");
 }
 
-Json::Value ASTJsonConverter::typePointerToJson(TypePointer _tp)
+Json::Value ASTJsonConverter::typePointerToJson(TypePointer _tp, bool _short)
 {
 	Json::Value typeDescriptions(Json::objectValue);
-	typeDescriptions["typeString"] = _tp ? Json::Value(_tp->toString()) : Json::nullValue;
+	typeDescriptions["typeString"] = _tp ? Json::Value(_tp->toString(_short)) : Json::nullValue;
 	typeDescriptions["typeIdentifier"] = _tp ? Json::Value(_tp->identifier()) : Json::nullValue;
 	return typeDescriptions;
 
 }
-Json::Value ASTJsonConverter::typePointerToJson(std::shared_ptr<std::vector<TypePointer>> _tps)
+Json::Value ASTJsonConverter::typePointerToJson(boost::optional<FuncCallArguments> const& _tps)
 {
 	if (_tps)
 	{
 		Json::Value arguments(Json::arrayValue);
-		for (auto const& tp: *_tps)
-			arguments.append(typePointerToJson(tp));
+		for (auto const& tp: _tps->types)
+			appendMove(arguments, typePointerToJson(tp));
 		return arguments;
 	}
 	else
@@ -165,12 +168,12 @@ void ASTJsonConverter::appendExpressionAttributes(
 		make_pair("isPure", _annotation.isPure),
 		make_pair("isLValue", _annotation.isLValue),
 		make_pair("lValueRequested", _annotation.lValueRequested),
-		make_pair("argumentTypes", typePointerToJson(_annotation.argumentTypes))
+		make_pair("argumentTypes", typePointerToJson(_annotation.arguments))
 	};
 	_attributes += exprAttributes;
 }
 
-Json::Value ASTJsonConverter::inlineAssemblyIdentifierToJson(pair<assembly::Identifier const* ,InlineAssemblyAnnotation::ExternalIdentifierInfo> _info)
+Json::Value ASTJsonConverter::inlineAssemblyIdentifierToJson(pair<yul::Identifier const* ,InlineAssemblyAnnotation::ExternalIdentifierInfo> _info) const
 {
 	Json::Value tuple(Json::objectValue);
 	tuple["src"] = sourceLocationToString(_info.first->location);
@@ -186,7 +189,7 @@ void ASTJsonConverter::print(ostream& _stream, ASTNode const& _node)
 	_stream << toJson(_node);
 }
 
-Json::Value ASTJsonConverter::toJson(ASTNode const& _node)
+Json::Value&& ASTJsonConverter::toJson(ASTNode const& _node)
 {
 	_node.accept(*this);
 	return std::move(m_currentValue);
@@ -232,7 +235,7 @@ bool ASTJsonConverter::visit(ImportDirective const& _node)
 		make_pair(m_legacy ? "SourceUnit" : "sourceUnit", nodeId(*_node.annotation().sourceUnit)),
 		make_pair("scope", idOrNull(_node.scope()))
 	};
-	attributes.push_back(make_pair("unitAlias", _node.name()));
+	attributes.emplace_back("unitAlias", _node.name());
 	Json::Value symbolAliases(Json::arrayValue);
 	for (auto const& symbolAlias: _node.symbolAliases())
 	{
@@ -242,7 +245,7 @@ bool ASTJsonConverter::visit(ImportDirective const& _node)
 		tuple["local"] =  symbolAlias.second ? Json::Value(*symbolAlias.second) : Json::nullValue;
 		symbolAliases.append(tuple);
 	}
-	attributes.push_back(make_pair("symbolAliases", std::move(symbolAliases)));
+	attributes.emplace_back("symbolAliases", std::move(symbolAliases));
 	setJsonNode(_node, "ImportDirective", std::move(attributes));
 	return false;
 }
@@ -253,7 +256,7 @@ bool ASTJsonConverter::visit(ContractDefinition const& _node)
 		make_pair("name", _node.name()),
 		make_pair("documentation", _node.documentation() ? Json::Value(*_node.documentation()) : Json::nullValue),
 		make_pair("contractKind", contractKind(_node.contractKind())),
-		make_pair("fullyImplemented", _node.annotation().isFullyImplemented),
+		make_pair("fullyImplemented", _node.annotation().unimplementedFunctions.empty()),
 		make_pair("linearizedBaseContracts", getContainerIds(_node.annotation().linearizedBaseContracts)),
 		make_pair("baseContracts", toJson(_node.baseContracts())),
 		make_pair("contractDependencies", getContainerIds(_node.annotation().contractDependencies)),
@@ -267,7 +270,7 @@ bool ASTJsonConverter::visit(InheritanceSpecifier const& _node)
 {
 	setJsonNode(_node, "InheritanceSpecifier", {
 		make_pair("baseName", toJson(_node.name())),
-		make_pair("arguments", toJson(_node.arguments()))
+		make_pair("arguments", _node.arguments() ? toJson(*_node.arguments()) : Json::nullValue)
 	});
 	return false;
 }
@@ -285,7 +288,7 @@ bool ASTJsonConverter::visit(StructDefinition const& _node)
 {
 	setJsonNode(_node, "StructDefinition", {
 		make_pair("name", _node.name()),
-		make_pair("visibility", visibility(_node.visibility())),
+		make_pair("visibility", Declaration::visibilityToString(_node.visibility())),
 		make_pair("canonicalName", _node.annotation().canonicalName),
 		make_pair("members", toJson(_node.members())),
 		make_pair("scope", idOrNull(_node.scope()))
@@ -323,17 +326,20 @@ bool ASTJsonConverter::visit(FunctionDefinition const& _node)
 {
 	std::vector<pair<string, Json::Value>> attributes = {
 		make_pair("name", _node.name()),
-		make_pair(m_legacy ? "constant" : "isDeclaredConst", _node.isDeclaredConst()),
-		make_pair("payable", _node.isPayable()),
-		make_pair("visibility", visibility(_node.visibility())),
+		make_pair("documentation", _node.documentation() ? Json::Value(*_node.documentation()) : Json::nullValue),
+		make_pair("kind", _node.isConstructor() ? "constructor" : (_node.isFallback() ? "fallback" : "function")),
+		make_pair("stateMutability", stateMutabilityToString(_node.stateMutability())),
+		make_pair("superFunction", idOrNull(_node.annotation().superFunction)),
+		make_pair("visibility", Declaration::visibilityToString(_node.visibility())),
 		make_pair("parameters", toJson(_node.parameterList())),
-		make_pair("isConstructor", _node.isConstructor()),
 		make_pair("returnParameters", toJson(*_node.returnParameterList())),
 		make_pair("modifiers", toJson(_node.modifiers())),
 		make_pair("body", _node.isImplemented() ? toJson(_node.body()) : Json::nullValue),
 		make_pair("implemented", _node.isImplemented()),
 		make_pair("scope", idOrNull(_node.scope()))
 	};
+	if (m_legacy)
+		attributes.emplace_back("isConstructor", _node.isConstructor());
 	setJsonNode(_node, "FunctionDefinition", std::move(attributes));
 	return false;
 }
@@ -346,13 +352,13 @@ bool ASTJsonConverter::visit(VariableDeclaration const& _node)
 		make_pair("constant", _node.isConstant()),
 		make_pair("stateVariable", _node.isStateVariable()),
 		make_pair("storageLocation", location(_node.referenceLocation())),
-		make_pair("visibility", visibility(_node.visibility())),
+		make_pair("visibility", Declaration::visibilityToString(_node.visibility())),
 		make_pair("value", _node.value() ? toJson(*_node.value()) : Json::nullValue),
 		make_pair("scope", idOrNull(_node.scope())),
-		make_pair("typeDescriptions", typePointerToJson(_node.annotation().type))
+		make_pair("typeDescriptions", typePointerToJson(_node.annotation().type, true))
 	};
 	if (m_inEvent)
-		attributes.push_back(make_pair("indexed", _node.isIndexed()));
+		attributes.emplace_back("indexed", _node.isIndexed());
 	setJsonNode(_node, "VariableDeclaration", std::move(attributes));
 	return false;
 }
@@ -361,7 +367,8 @@ bool ASTJsonConverter::visit(ModifierDefinition const& _node)
 {
 	setJsonNode(_node, "ModifierDefinition", {
 		make_pair("name", _node.name()),
-		make_pair("visibility", visibility(_node.visibility())),
+		make_pair("documentation", _node.documentation() ? Json::Value(*_node.documentation()) : Json::nullValue),
+		make_pair("visibility", Declaration::visibilityToString(_node.visibility())),
 		make_pair("parameters", toJson(_node.parameterList())),
 		make_pair("body", toJson(_node.body()))
 	});
@@ -372,14 +379,8 @@ bool ASTJsonConverter::visit(ModifierInvocation const& _node)
 {
 	setJsonNode(_node, "ModifierInvocation", {
 		make_pair("modifierName", toJson(*_node.name())),
-		make_pair("arguments", toJson(_node.arguments()))
+		make_pair("arguments", _node.arguments() ? toJson(*_node.arguments()) : Json::nullValue)
 	});
-	return false;
-}
-
-bool ASTJsonConverter::visit(TypeName const&)
-{
-	solAssert(false, "AST node of abstract type used.");
 	return false;
 }
 
@@ -388,6 +389,7 @@ bool ASTJsonConverter::visit(EventDefinition const& _node)
 	m_inEvent = true;
 	setJsonNode(_node, "EventDefinition", {
 		make_pair("name", _node.name()),
+		make_pair("documentation", _node.documentation() ? Json::Value(*_node.documentation()) : Json::nullValue),
 		make_pair("parameters", toJson(_node.parameterList())),
 		make_pair("anonymous", _node.isAnonymous())
 	});
@@ -396,10 +398,15 @@ bool ASTJsonConverter::visit(EventDefinition const& _node)
 
 bool ASTJsonConverter::visit(ElementaryTypeName const& _node)
 {
-	setJsonNode(_node, "ElementaryTypeName", {
+	std::vector<pair<string, Json::Value>> attributes = {
 		make_pair("name", _node.typeName().toString()),
-		make_pair("typeDescriptions", typePointerToJson(_node.annotation().type))
-	});
+		make_pair("typeDescriptions", typePointerToJson(_node.annotation().type, true))
+	};
+
+	if (_node.stateMutability())
+		attributes.emplace_back(make_pair("stateMutability", stateMutabilityToString(*_node.stateMutability())));
+
+	setJsonNode(_node, "ElementaryTypeName", std::move(attributes));
 	return false;
 }
 
@@ -409,7 +416,7 @@ bool ASTJsonConverter::visit(UserDefinedTypeName const& _node)
 		make_pair("name", namePathToString(_node.namePath())),
 		make_pair("referencedDeclaration", idOrNull(_node.annotation().referencedDeclaration)),
 		make_pair("contractScope", idOrNull(_node.annotation().contractScope)),
-		make_pair("typeDescriptions", typePointerToJson(_node.annotation().type))
+		make_pair("typeDescriptions", typePointerToJson(_node.annotation().type, true))
 	});
 	return false;
 }
@@ -417,12 +424,11 @@ bool ASTJsonConverter::visit(UserDefinedTypeName const& _node)
 bool ASTJsonConverter::visit(FunctionTypeName const& _node)
 {
 	setJsonNode(_node, "FunctionTypeName", {
-		make_pair("payable", _node.isPayable()),
-		make_pair("visibility", visibility(_node.visibility())),
-		make_pair(m_legacy ? "constant" : "isDeclaredConst", _node.isDeclaredConst()),
+		make_pair("visibility", Declaration::visibilityToString(_node.visibility())),
+		make_pair("stateMutability", stateMutabilityToString(_node.stateMutability())),
 		make_pair("parameterTypes", toJson(*_node.parameterTypeList())),
 		make_pair("returnParameterTypes", toJson(*_node.returnParameterTypeList())),
-		make_pair("typeDescriptions", typePointerToJson(_node.annotation().type))
+		make_pair("typeDescriptions", typePointerToJson(_node.annotation().type, true))
 	});
 	return false;
 }
@@ -432,7 +438,7 @@ bool ASTJsonConverter::visit(Mapping const& _node)
 	setJsonNode(_node, "Mapping", {
 		make_pair("keyType", toJson(_node.keyType())),
 		make_pair("valueType", toJson(_node.valueType())),
-		make_pair("typeDescriptions", typePointerToJson(_node.annotation().type))
+		make_pair("typeDescriptions", typePointerToJson(_node.annotation().type, true))
 	});
 	return false;
 }
@@ -442,7 +448,7 @@ bool ASTJsonConverter::visit(ArrayTypeName const& _node)
 	setJsonNode(_node, "ArrayTypeName", {
 		make_pair("baseType", toJson(_node.baseType())),
 		make_pair("length", toJsonOrNull(_node.length())),
-		make_pair("typeDescriptions", typePointerToJson(_node.annotation().type))
+		make_pair("typeDescriptions", typePointerToJson(_node.annotation().type, true))
 	});
 	return false;
 }
@@ -455,12 +461,12 @@ bool ASTJsonConverter::visit(InlineAssembly const& _node)
 		if (it.first)
 		{
 			Json::Value tuple(Json::objectValue);
-			tuple[it.first->name] = inlineAssemblyIdentifierToJson(it);
+			tuple[it.first->name.str()] = inlineAssemblyIdentifierToJson(it);
 			externalReferences.append(tuple);
 		}
 	}
 	setJsonNode(_node, "InlineAssembly", {
-		make_pair("operations", Json::Value(assembly::AsmPrinter()(_node.operations()))),
+		make_pair("operations", Json::Value(yul::AsmPrinter()(_node.operations()))),
 		make_pair("externalReferences", std::move(externalReferences))
 	});
 	return false;
@@ -537,15 +543,23 @@ bool ASTJsonConverter::visit(Return const& _node)
 
 bool ASTJsonConverter::visit(Throw const& _node)
 {
-	setJsonNode(_node, "Throw", {});;
+	setJsonNode(_node, "Throw", {});
+	return false;
+}
+
+bool ASTJsonConverter::visit(EmitStatement const& _node)
+{
+	setJsonNode(_node, "EmitStatement", {
+		make_pair("eventCall", toJson(_node.eventCall()))
+	});
 	return false;
 }
 
 bool ASTJsonConverter::visit(VariableDeclarationStatement const& _node)
 {
 	Json::Value varDecs(Json::arrayValue);
-	for (auto const& v: _node.annotation().assignments)
-		varDecs.append(idOrNull(v));
+	for (auto const& v: _node.declarations())
+		appendMove(varDecs, idOrNull(v.get()));
 	setJsonNode(_node, "VariableDeclarationStatement", {
 		make_pair("assignments", std::move(varDecs)),
 		make_pair("declarations", toJson(_node.declarations())),
@@ -577,7 +591,7 @@ bool ASTJsonConverter::visit(Conditional const& _node)
 bool ASTJsonConverter::visit(Assignment const& _node)
 {
 	std::vector<pair<string, Json::Value>> attributes = {
-		make_pair("operator", Token::toString(_node.assignmentOperator())),
+		make_pair("operator", TokenTraits::toString(_node.assignmentOperator())),
 		make_pair("leftHandSide", toJson(_node.leftHandSide())),
 		make_pair("rightHandSide", toJson(_node.rightHandSide()))
 	};
@@ -601,7 +615,7 @@ bool ASTJsonConverter::visit(UnaryOperation const& _node)
 {
 	std::vector<pair<string, Json::Value>> attributes = {
 		make_pair("prefix", _node.isPrefixOperation()),
-		make_pair("operator", Token::toString(_node.getOperator())),
+		make_pair("operator", TokenTraits::toString(_node.getOperator())),
 		make_pair("subExpression", toJson(_node.subExpression()))
 	};
 	appendExpressionAttributes(attributes, _node.annotation());
@@ -612,7 +626,7 @@ bool ASTJsonConverter::visit(UnaryOperation const& _node)
 bool ASTJsonConverter::visit(BinaryOperation const& _node)
 {
 	std::vector<pair<string, Json::Value>> attributes = {
-		make_pair("operator", Token::toString(_node.getOperator())),
+		make_pair("operator", TokenTraits::toString(_node.getOperator())),
 		make_pair("leftExpression", toJson(_node.leftExpression())),
 		make_pair("rightExpression", toJson(_node.rightExpression())),
 		make_pair("commonType", typePointerToJson(_node.annotation().commonType)),
@@ -634,11 +648,11 @@ bool ASTJsonConverter::visit(FunctionCall const& _node)
 	};
 	if (m_legacy)
 	{
-		attributes.push_back(make_pair("isStructConstructorCall", _node.annotation().kind == FunctionCallKind::StructConstructorCall));
-		attributes.push_back(make_pair("type_conversion", _node.annotation().kind == FunctionCallKind::TypeConversion));
+		attributes.emplace_back("isStructConstructorCall", _node.annotation().kind == FunctionCallKind::StructConstructorCall);
+		attributes.emplace_back("type_conversion", _node.annotation().kind == FunctionCallKind::TypeConversion);
 	}
 	else
-		attributes.push_back(make_pair("kind", functionCallKind(_node.annotation().kind)));
+		attributes.emplace_back("kind", functionCallKind(_node.annotation().kind));
 	appendExpressionAttributes(attributes, _node.annotation());
 	setJsonNode(_node, "FunctionCall", std::move(attributes));
 	return false;
@@ -687,7 +701,7 @@ bool ASTJsonConverter::visit(Identifier const& _node)
 		make_pair("referencedDeclaration", idOrNull(_node.annotation().referencedDeclaration)),
 		make_pair("overloadedDeclarations", overloads),
 		make_pair("typeDescriptions", typePointerToJson(_node.annotation().type)),
-		make_pair("argumentTypes", typePointerToJson(_node.annotation().argumentTypes))
+		make_pair("argumentTypes", typePointerToJson(_node.annotation().arguments))
 	});
 	return false;
 }
@@ -707,16 +721,16 @@ bool ASTJsonConverter::visit(Literal const& _node)
 	Json::Value value{_node.value()};
 	if (!dev::validateUTF8(_node.value()))
 		value = Json::nullValue;
-	Token::Value subdenomination = Token::Value(_node.subDenomination());
+	Token subdenomination = Token(_node.subDenomination());
 	std::vector<pair<string, Json::Value>> attributes = {
 		make_pair(m_legacy ? "token" : "kind", literalTokenKind(_node.token())),
 		make_pair("value", value),
-		make_pair(m_legacy ? "hexvalue" : "hexValue", toHex(_node.value())),
+		make_pair(m_legacy ? "hexvalue" : "hexValue", toHex(asBytes(_node.value()))),
 		make_pair(
 			"subdenomination",
 			subdenomination == Token::Illegal ?
 			Json::nullValue :
-			Json::Value{Token::toString(subdenomination)}
+			Json::Value{TokenTraits::toString(subdenomination)}
 		)
 	};
 	appendExpressionAttributes(attributes, _node.annotation());
@@ -730,36 +744,21 @@ void ASTJsonConverter::endVisit(EventDefinition const&)
 	m_inEvent = false;
 }
 
-string ASTJsonConverter::visibility(Declaration::Visibility const& _visibility)
-{
-	switch (_visibility)
-	{
-	case Declaration::Visibility::Private:
-		return "private";
-	case Declaration::Visibility::Internal:
-		return "internal";
-	case Declaration::Visibility::Public:
-		return "public";
-	case Declaration::Visibility::External:
-		return "external";
-	default:
-		BOOST_THROW_EXCEPTION(InternalCompilerError() << errinfo_comment("Unknown declaration visibility."));
-	}
-}
-
 string ASTJsonConverter::location(VariableDeclaration::Location _location)
 {
 	switch (_location)
 	{
-	case VariableDeclaration::Location::Default:
+	case VariableDeclaration::Location::Unspecified:
 		return "default";
 	case VariableDeclaration::Location::Storage:
 		return "storage";
 	case VariableDeclaration::Location::Memory:
 		return "memory";
-	default:
-		BOOST_THROW_EXCEPTION(InternalCompilerError() << errinfo_comment("Unknown declaration location."));
+	case VariableDeclaration::Location::CallData:
+		return "calldata";
 	}
+	// To make the compiler happy
+	return {};
 }
 
 string ASTJsonConverter::contractKind(ContractDefinition::ContractKind _kind)
@@ -772,9 +771,10 @@ string ASTJsonConverter::contractKind(ContractDefinition::ContractKind _kind)
 		return "contract";
 	case ContractDefinition::ContractKind::Library:
 		return "library";
-	default:
-		BOOST_THROW_EXCEPTION(InternalCompilerError() << errinfo_comment("Unknown kind of contract."));
 	}
+
+	// To make the compiler happy
+	return {};
 }
 
 string ASTJsonConverter::functionCallKind(FunctionCallKind _kind)
@@ -788,11 +788,11 @@ string ASTJsonConverter::functionCallKind(FunctionCallKind _kind)
 	case FunctionCallKind::StructConstructorCall:
 		return "structConstructorCall";
 	default:
-		BOOST_THROW_EXCEPTION(InternalCompilerError() << errinfo_comment("Unknown kind of function call ."));
+		solAssert(false, "Unknown kind of function call.");
 	}
 }
 
-string ASTJsonConverter::literalTokenKind(Token::Value _token)
+string ASTJsonConverter::literalTokenKind(Token _token)
 {
 	switch (_token)
 	{
@@ -804,7 +804,7 @@ string ASTJsonConverter::literalTokenKind(Token::Value _token)
 	case dev::solidity::Token::FalseLiteral:
 		return "bool";
 	default:
-		BOOST_THROW_EXCEPTION(InternalCompilerError() << errinfo_comment("Unknown kind of literal token."));
+		solAssert(false, "Unknown kind of literal token.");
 	}
 }
 

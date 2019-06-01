@@ -22,7 +22,8 @@
 #pragma once
 
 #include <libsolidity/interface/CompilerStack.h>
-#include <libsolidity/interface/AssemblyStack.h>
+#include <libyul/AssemblyStack.h>
+#include <liblangutil/EVMVersion.h>
 
 #include <boost/program_options.hpp>
 #include <boost/filesystem/path.hpp>
@@ -40,8 +41,6 @@ enum class DocumentationType: uint8_t;
 class CommandLineInterface
 {
 public:
-	CommandLineInterface() {}
-
 	/// Parse command line arguments and return false if we should not continue
 	bool parseArguments(int _argc, char** _argv);
 	/// Parse the files and create source code objects
@@ -53,8 +52,12 @@ public:
 private:
 	bool link();
 	void writeLinkedFiles();
+	/// @returns the ``// <identifier> -> name`` hint for library placeholders.
+	static std::string libraryPlaceholderHint(std::string const& _libraryName);
+	/// @returns the full object with library placeholder hints in hex.
+	static std::string objectWithLinkRefsHex(eth::LinkerObject const& _obj);
 
-	bool assemble(AssemblyStack::Language _language, AssemblyStack::Machine _targetMachine);
+	bool assemble(yul::AssemblyStack::Language _language, yul::AssemblyStack::Machine _targetMachine, bool _optimize);
 
 	void outputCompilationResults();
 
@@ -62,16 +65,17 @@ private:
 	void handleAst(std::string const& _argStr);
 	void handleBinary(std::string const& _contract);
 	void handleOpcode(std::string const& _contract);
+	void handleIR(std::string const& _contract);
 	void handleBytecode(std::string const& _contract);
 	void handleSignatureHashes(std::string const& _contract);
-	void handleOnChainMetadata(std::string const& _contract);
+	void handleMetadata(std::string const& _contract);
 	void handleABI(std::string const& _contract);
-	void handleNatspec(DocumentationType _type, std::string const& _contract);
+	void handleNatspec(bool _natspecDev, std::string const& _contract);
 	void handleGasEstimation(std::string const& _contract);
 	void handleFormal();
 
 	/// Fills @a m_sourceCodes initially and @a m_redirects.
-	void readInputFilesAndConfigureRemappings();
+	bool readInputFilesAndConfigureRemappings();
 	/// Tries to read from the file @a _input or interprets _input literally if that fails.
 	/// It then tries to parse the contents and appends to m_libraries.
 	bool parseLibraryOption(std::string const& _input);
@@ -80,6 +84,11 @@ private:
 	/// @arg _fileName the name of the file
 	/// @arg _data to be written
 	void createFile(std::string const& _fileName, std::string const& _data);
+
+	/// Create a json file in the given directory
+	/// @arg _fileName the name of the file (the extension will be replaced with .json)
+	/// @arg _json json string to be written
+	void createJson(std::string const& _fileName, std::string const& _json);
 
 	bool m_error = false; ///< If true, some error occurred.
 
@@ -91,12 +100,18 @@ private:
 	boost::program_options::variables_map m_args;
 	/// map of input files to source code strings
 	std::map<std::string, std::string> m_sourceCodes;
+	/// list of remappings
+	std::vector<dev::solidity::CompilerStack::Remapping> m_remappings;
 	/// list of allowed directories to read files from
 	std::vector<boost::filesystem::path> m_allowedDirectories;
 	/// map of library names to addresses
 	std::map<std::string, h160> m_libraries;
 	/// Solidity compiler stack
 	std::unique_ptr<dev::solidity::CompilerStack> m_compiler;
+	/// EVM version to use
+	langutil::EVMVersion m_evmVersion;
+	/// Whether or not to colorize diagnostics output.
+	bool m_coloredOutput = true;
 };
 
 }

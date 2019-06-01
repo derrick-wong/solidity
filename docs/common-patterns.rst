@@ -13,11 +13,11 @@ Withdrawal from Contracts
 The recommended method of sending funds after an effect
 is using the withdrawal pattern. Although the most intuitive
 method of sending Ether, as a result of an effect, is a
-direct ``send`` call, this is not recommended as it
+direct ``transfer`` call, this is not recommended as it
 introduces a potential security risk. You may read
 more about this on the :ref:`security_considerations` page.
 
-This is an example of the withdrawal pattern in practice in
+The following is an example of the withdrawal pattern in practice in
 a contract where the goal is to send the most money to the
 contract in order to become the "richest", inspired by
 `King of the Ether <https://www.kingoftheether.com/>`_.
@@ -28,7 +28,7 @@ become the new richest.
 
 ::
 
-    pragma solidity ^0.4.11;
+    pragma solidity >=0.5.0 <0.7.0;
 
     contract WithdrawalContract {
         address public richest;
@@ -36,12 +36,12 @@ become the new richest.
 
         mapping (address => uint) pendingWithdrawals;
 
-        function WithdrawalContract() payable {
+        constructor() public payable {
             richest = msg.sender;
             mostSent = msg.value;
         }
 
-        function becomeRichest() payable returns (bool) {
+        function becomeRichest() public payable returns (bool) {
             if (msg.value > mostSent) {
                 pendingWithdrawals[richest] += msg.value;
                 richest = msg.sender;
@@ -52,7 +52,7 @@ become the new richest.
             }
         }
 
-        function withdraw() {
+        function withdraw() public {
             uint amount = pendingWithdrawals[msg.sender];
             // Remember to zero the pending refund before
             // sending to prevent re-entrancy attacks
@@ -65,18 +65,18 @@ This is as opposed to the more intuitive sending pattern:
 
 ::
 
-    pragma solidity ^0.4.11;
+    pragma solidity >=0.5.0 <0.7.0;
 
     contract SendContract {
-        address public richest;
+        address payable public richest;
         uint public mostSent;
 
-        function SendContract() payable {
+        constructor() public payable {
             richest = msg.sender;
             mostSent = msg.value;
         }
 
-        function becomeRichest() payable returns (bool) {
+        function becomeRichest() public payable returns (bool) {
             if (msg.value > mostSent) {
                 // This line can cause problems (explained below).
                 richest.transfer(msg.value);
@@ -93,7 +93,7 @@ Notice that, in this example, an attacker could trap the
 contract into an unusable state by causing ``richest`` to be
 the address of a contract that has a fallback function
 which fails (e.g. by using ``revert()`` or by just
-conssuming more than the 2300 gas stipend). That way,
+consuming more than the 2300 gas stipend transferred to them). That way,
 whenever ``transfer`` is called to deliver funds to the
 "poisoned" contract, it will fail and thus also ``becomeRichest``
 will fail, with the contract being stuck forever.
@@ -117,11 +117,11 @@ to read the data, so will everyone else.
 
 You can restrict read access to your contract's state
 by **other contracts**. That is actually the default
-unless you declare make your state variables ``public``.
+unless you declare your state variables ``public``.
 
 Furthermore, you can restrict who can make modifications
 to your contract's state or call your contract's
-functions and this is what this page is about.
+functions and this is what this section is about.
 
 .. index:: function;modifier
 
@@ -130,7 +130,7 @@ restrictions highly readable.
 
 ::
 
-    pragma solidity ^0.4.11;
+    pragma solidity >=0.4.22 <0.7.0;
 
     contract AccessRestriction {
         // These will be assigned at the construction
@@ -147,7 +147,10 @@ restrictions highly readable.
         // a certain address.
         modifier onlyBy(address _account)
         {
-            require(msg.sender == _account);
+            require(
+                msg.sender == _account,
+                "Sender not authorized."
+            );
             // Do not forget the "_;"! It will
             // be replaced by the actual function
             // body when the modifier is used.
@@ -157,13 +160,17 @@ restrictions highly readable.
         /// Make `_newOwner` the new owner of this
         /// contract.
         function changeOwner(address _newOwner)
+            public
             onlyBy(owner)
         {
             owner = _newOwner;
         }
 
         modifier onlyAfter(uint _time) {
-            require(now >= _time);
+            require(
+                now >= _time,
+                "Function called too early."
+            );
             _;
         }
 
@@ -171,6 +178,7 @@ restrictions highly readable.
         /// May only be called 6 weeks after
         /// the contract has been created.
         function disown()
+            public
             onlyBy(owner)
             onlyAfter(creationTime + 6 weeks)
         {
@@ -184,13 +192,18 @@ restrictions highly readable.
         // This was dangerous before Solidity version 0.4.0,
         // where it was possible to skip the part after `_;`.
         modifier costs(uint _amount) {
-            require(msg.value >= _amount);
+            require(
+                msg.value >= _amount,
+                "Not enough Ether provided."
+            );
             _;
             if (msg.value > _amount)
-                msg.sender.send(msg.value - _amount);
+                msg.sender.transfer(msg.value - _amount);
         }
 
         function forceOwnerChange(address _newOwner)
+            public
+            payable
             costs(200 ether)
         {
             owner = _newOwner;
@@ -269,7 +282,7 @@ function finishes.
 
 ::
 
-    pragma solidity ^0.4.11;
+    pragma solidity >=0.4.22 <0.7.0;
 
     contract StateMachine {
         enum Stages {
@@ -286,7 +299,10 @@ function finishes.
         uint public creationTime = now;
 
         modifier atStage(Stages _stage) {
-            require(stage == _stage);
+            require(
+                stage == _stage,
+                "Function cannot be called at this time."
+            );
             _;
         }
 
@@ -310,6 +326,7 @@ function finishes.
 
         // Order of the modifiers matters here!
         function bid()
+            public
             payable
             timedTransitions
             atStage(Stages.AcceptingBlindedBids)
@@ -318,6 +335,7 @@ function finishes.
         }
 
         function reveal()
+            public
             timedTransitions
             atStage(Stages.RevealBids)
         {
@@ -332,6 +350,7 @@ function finishes.
         }
 
         function g()
+            public
             timedTransitions
             atStage(Stages.AnotherStage)
             transitionNext
@@ -339,6 +358,7 @@ function finishes.
         }
 
         function h()
+            public
             timedTransitions
             atStage(Stages.AreWeDoneYet)
             transitionNext
@@ -346,6 +366,7 @@ function finishes.
         }
 
         function i()
+            public
             timedTransitions
             atStage(Stages.Finished)
         {

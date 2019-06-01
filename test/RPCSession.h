@@ -21,7 +21,6 @@
 
 #if defined(_WIN32)
 #include <windows.h>
-#include "libdevcore/UndefMacros.h"
 #else
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -41,7 +40,7 @@
 class IPCSocket : public boost::noncopyable
 {
 public:
-	IPCSocket(std::string const& _path);
+	explicit IPCSocket(std::string const& _path);
 	std::string sendRequest(std::string const& _req);
 	~IPCSocket() { CloseHandle(m_socket); }
 
@@ -56,9 +55,12 @@ private:
 class IPCSocket: public boost::noncopyable
 {
 public:
-	IPCSocket(std::string const& _path);
+	explicit IPCSocket(std::string const& _path);
 	std::string sendRequest(std::string const& _req);
-	~IPCSocket() { close(m_socket); }
+	~IPCSocket() {
+		shutdown(m_socket, SHUT_RDWR);
+		close(m_socket);
+	}
 
 	std::string const& path() const { return m_path; }
 
@@ -100,6 +102,8 @@ public:
 		std::string contractAddress;
 		std::vector<LogEntry> logEntries;
 		std::string blockNumber;
+		/// note: pre-byzantium the status field will be empty
+		std::string status;
 	};
 
 	static RPCSession& instance(std::string const& _path);
@@ -108,10 +112,11 @@ public:
 	Json::Value eth_getBlockByNumber(std::string const& _blockNumber, bool _fullObjects);
 	std::string eth_call(TransactionData const& _td, std::string const& _blockNumber);
 	TransactionReceipt eth_getTransactionReceipt(std::string const& _transactionHash);
-	std::string eth_sendTransaction(TransactionData const& _transactionData);
+	std::string eth_sendTransaction(TransactionData const& _td);
 	std::string eth_sendTransaction(std::string const& _transaction);
 	std::string eth_getBalance(std::string const& _address, std::string const& _blockNumber);
 	std::string eth_getStorageRoot(std::string const& _address, std::string const& _blockNumber);
+	std::string eth_gasPrice();
 	std::string personal_newAccount(std::string const& _password);
 	void personal_unlockAccount(std::string const& _address, std::string const& _password, int _duration);
 	void test_setChainParams(std::vector<std::string> const& _accounts);
@@ -122,10 +127,11 @@ public:
 	Json::Value rpcCall(std::string const& _methodName, std::vector<std::string> const& _args = std::vector<std::string>(), bool _canFail = false);
 
 	std::string const& account(size_t _id) const { return m_accounts.at(_id); }
+	std::string const& accountCreate();
 	std::string const& accountCreateIfNotExists(size_t _id);
 
 private:
-	RPCSession(std::string const& _path);
+	explicit RPCSession(std::string const& _path);
 
 	inline std::string quote(std::string const& _arg) { return "\"" + _arg + "\""; }
 	/// Parse std::string replacing keywords to values
@@ -133,9 +139,7 @@ private:
 
 	IPCSocket m_ipcSocket;
 	size_t m_rpcSequence = 1;
-	unsigned m_maxMiningTime = 6000000; // 600 seconds
-	unsigned m_sleepTime = 10; // 10 milliseconds
-	unsigned m_successfulMineRuns = 0;
+	bool m_receiptHasStatusField = false;
 
 	std::vector<std::string> m_accounts;
 };

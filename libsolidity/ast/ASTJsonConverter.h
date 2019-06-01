@@ -1,18 +1,18 @@
 /*
-    This file is part of solidity.
+	This file is part of solidity.
 
-    solidity is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+	solidity is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
 
-    solidity is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	solidity is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with solidity.  If not, see <http://www.gnu.org/licenses/>.
+	You should have received a copy of the GNU General Public License
+	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
 */
 /**
  * @author Lefteris <lefteris@ethdev.com>
@@ -22,12 +22,18 @@
 
 #pragma once
 
+#include <libsolidity/ast/ASTAnnotations.h>
+#include <libsolidity/ast/ASTVisitor.h>
+#include <liblangutil/Exceptions.h>
+
+#include <json/json.h>
 #include <ostream>
 #include <stack>
-#include <libsolidity/ast/ASTVisitor.h>
-#include <libsolidity/interface/Exceptions.h>
-#include <libsolidity/ast/ASTAnnotations.h>
-#include <json/json.h>
+
+namespace langutil
+{
+struct SourceLocation;
+}
 
 namespace dev
 {
@@ -49,13 +55,16 @@ public:
 	);
 	/// Output the json representation of the AST to _stream.
 	void print(std::ostream& _stream, ASTNode const& _node);
-	Json::Value toJson(ASTNode const& _node);
+	Json::Value&& toJson(ASTNode const& _node);
 	template <class T>
 	Json::Value toJson(std::vector<ASTPointer<T>> const& _nodes)
 	{
 		Json::Value ret(Json::arrayValue);
 		for (auto const& n: _nodes)
-			ret.append(n ? toJson(*n) : Json::nullValue);
+			if (n)
+				appendMove(ret, toJson(*n));
+			else
+				ret.append(Json::nullValue);
 		return ret;
 	}
 	bool visit(SourceUnit const& _node) override;
@@ -73,7 +82,6 @@ public:
 	bool visit(ModifierDefinition const& _node) override;
 	bool visit(ModifierInvocation const& _node) override;
 	bool visit(EventDefinition const& _node) override;
-	bool visit(TypeName const& _node) override;
 	bool visit(ElementaryTypeName const& _node) override;
 	bool visit(UserDefinedTypeName const& _node) override;
 	bool visit(FunctionTypeName const& _node) override;
@@ -89,6 +97,7 @@ public:
 	bool visit(Break const& _node) override;
 	bool visit(Return const& _node) override;
 	bool visit(Throw const& _node) override;
+	bool visit(EmitStatement const& _node) override;
 	bool visit(VariableDeclarationStatement const& _node) override;
 	bool visit(ExpressionStatement const& _node) override;
 	bool visit(Conditional const& _node) override;
@@ -117,9 +126,9 @@ private:
 		std::string const& _nodeName,
 		std::vector<std::pair<std::string, Json::Value>>&& _attributes
 	);
-	std::string sourceLocationToString(SourceLocation const& _location) const;
-	std::string namePathToString(std::vector<ASTString> const& _namePath) const;
-	Json::Value idOrNull(ASTNode const* _pt)
+	std::string sourceLocationToString(langutil::SourceLocation const& _location) const;
+	static std::string namePathToString(std::vector<ASTString> const& _namePath);
+	static Json::Value idOrNull(ASTNode const* _pt)
 	{
 		return _pt ? Json::Value(nodeId(*_pt)) : Json::nullValue;
 	}
@@ -127,20 +136,19 @@ private:
 	{
 		return _node ? toJson(*_node) : Json::nullValue;
 	}
-	Json::Value inlineAssemblyIdentifierToJson(std::pair<assembly::Identifier const* , InlineAssemblyAnnotation::ExternalIdentifierInfo> _info);
-	std::string visibility(Declaration::Visibility const& _visibility);
-	std::string location(VariableDeclaration::Location _location);
-	std::string contractKind(ContractDefinition::ContractKind _kind);
-	std::string functionCallKind(FunctionCallKind _kind);
-	std::string literalTokenKind(Token::Value _token);
-	std::string type(Expression const& _expression);
-	std::string type(VariableDeclaration const& _varDecl);
-	int nodeId(ASTNode const& _node)
+	Json::Value inlineAssemblyIdentifierToJson(std::pair<yul::Identifier const* , InlineAssemblyAnnotation::ExternalIdentifierInfo> _info) const;
+	static std::string location(VariableDeclaration::Location _location);
+	static std::string contractKind(ContractDefinition::ContractKind _kind);
+	static std::string functionCallKind(FunctionCallKind _kind);
+	static std::string literalTokenKind(Token _token);
+	static std::string type(Expression const& _expression);
+	static std::string type(VariableDeclaration const& _varDecl);
+	static int nodeId(ASTNode const& _node)
 	{
 		return _node.id();
 	}
 	template<class Container>
-	Json::Value getContainerIds(Container const& container)
+	static Json::Value getContainerIds(Container const& container)
 	{
 		Json::Value tmp(Json::arrayValue);
 		for (auto const& element: container)
@@ -150,12 +158,18 @@ private:
 		}
 		return tmp;
 	}
-	Json::Value typePointerToJson(TypePointer _tp);
-	Json::Value typePointerToJson(std::shared_ptr<std::vector<TypePointer>> _tps);
+	static Json::Value typePointerToJson(TypePointer _tp, bool _short = false);
+	static Json::Value typePointerToJson(boost::optional<FuncCallArguments> const& _tps);
 	void appendExpressionAttributes(
 		std::vector<std::pair<std::string, Json::Value>> &_attributes,
 		ExpressionAnnotation const& _annotation
 	);
+	static void appendMove(Json::Value& _array, Json::Value&& _value)
+	{
+		solAssert(_array.isArray(), "");
+		_array.append(std::move(_value));
+	}
+
 	bool m_legacy = false; ///< if true, use legacy format
 	bool m_inEvent = false; ///< whether we are currently inside an event or not
 	Json::Value m_currentValue;

@@ -1,18 +1,18 @@
 /*
-    This file is part of solidity.
+	This file is part of solidity.
 
-    solidity is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+	solidity is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
 
-    solidity is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	solidity is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with solidity.  If not, see <http://www.gnu.org/licenses/>.
+	You should have received a copy of the GNU General Public License
+	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
 */
 /**
  * @author Christian <c@ethdev.com>
@@ -21,10 +21,13 @@
  */
 
 #include <libsolidity/ast/ASTPrinter.h>
-#include <boost/algorithm/string/join.hpp>
+
 #include <libsolidity/ast/AST.h>
+#include <boost/algorithm/string/join.hpp>
+#include <json/json.h>
 
 using namespace std;
+using namespace langutil;
 
 namespace dev
 {
@@ -75,6 +78,13 @@ bool ASTPrinter::visit(InheritanceSpecifier const& _node)
 	return goDeeper();
 }
 
+bool ASTPrinter::visit(UsingForDirective const& _node)
+{
+	writeLine("UsingForDirective");
+	printSourcePart(_node);
+	return goDeeper();
+}
+
 bool ASTPrinter::visit(StructDefinition const& _node)
 {
 	writeLine("StructDefinition \"" + _node.name() + "\"");
@@ -103,9 +113,13 @@ bool ASTPrinter::visit(ParameterList const& _node)
 
 bool ASTPrinter::visit(FunctionDefinition const& _node)
 {
-	writeLine("FunctionDefinition \"" + _node.name() + "\"" +
-			  (_node.isPublic() ? " - public" : "") +
-			  (_node.isDeclaredConst() ? " - const" : ""));
+	writeLine(
+		"FunctionDefinition \"" +
+		_node.name() +
+		"\"" +
+		(_node.isPublic() ? " - public" : "") +
+		(_node.stateMutability() == StateMutability::View ? " - const" : "")
+	);
 	printSourcePart(_node);
 	return goDeeper();
 }
@@ -139,13 +153,6 @@ bool ASTPrinter::visit(ModifierInvocation const& _node)
 bool ASTPrinter::visit(EventDefinition const& _node)
 {
 	writeLine("EventDefinition \"" + _node.name() + "\"");
-	printSourcePart(_node);
-	return goDeeper();
-}
-
-bool ASTPrinter::visit(TypeName const& _node)
-{
-	writeLine("TypeName");
 	printSourcePart(_node);
 	return goDeeper();
 }
@@ -255,6 +262,13 @@ bool ASTPrinter::visit(Throw const& _node)
 	return goDeeper();
 }
 
+bool ASTPrinter::visit(EmitStatement const& _node)
+{
+	writeLine("EmitStatement");
+	printSourcePart(_node);
+	return goDeeper();
+}
+
 bool ASTPrinter::visit(VariableDeclarationStatement const& _node)
 {
 	writeLine("VariableDeclarationStatement");
@@ -279,7 +293,7 @@ bool ASTPrinter::visit(Conditional const& _node)
 
 bool ASTPrinter::visit(Assignment const& _node)
 {
-	writeLine(string("Assignment using operator ") + Token::toString(_node.assignmentOperator()));
+	writeLine(string("Assignment using operator ") + TokenTraits::toString(_node.assignmentOperator()));
 	printType(_node);
 	printSourcePart(_node);
 	return goDeeper();
@@ -295,8 +309,12 @@ bool ASTPrinter::visit(TupleExpression const& _node)
 
 bool ASTPrinter::visit(UnaryOperation const& _node)
 {
-	writeLine(string("UnaryOperation (") + (_node.isPrefixOperation() ? "prefix" : "postfix") +
-			  ") " + Token::toString(_node.getOperator()));
+	writeLine(
+		string("UnaryOperation (") +
+		(_node.isPrefixOperation() ? "prefix" : "postfix") +
+		") " +
+		TokenTraits::toString(_node.getOperator())
+	);
 	printType(_node);
 	printSourcePart(_node);
 	return goDeeper();
@@ -304,7 +322,7 @@ bool ASTPrinter::visit(UnaryOperation const& _node)
 
 bool ASTPrinter::visit(BinaryOperation const& _node)
 {
-	writeLine(string("BinaryOperation using operator ") + Token::toString(_node.getOperator()));
+	writeLine(string("BinaryOperation using operator ") + TokenTraits::toString(_node.getOperator()));
 	printType(_node);
 	printSourcePart(_node);
 	return goDeeper();
@@ -360,7 +378,7 @@ bool ASTPrinter::visit(ElementaryTypeNameExpression const& _node)
 
 bool ASTPrinter::visit(Literal const& _node)
 {
-	char const* tokenString = Token::toString(_node.token());
+	char const* tokenString = TokenTraits::toString(_node.token());
 	if (!tokenString)
 		tokenString = "[no token]";
 	writeLine(string("Literal, token: ") + tokenString + " value: " + _node.value());
@@ -385,6 +403,11 @@ void ASTPrinter::endVisit(ContractDefinition const&)
 }
 
 void ASTPrinter::endVisit(InheritanceSpecifier const&)
+{
+	m_indentation--;
+}
+
+void ASTPrinter::endVisit(UsingForDirective const&)
 {
 	m_indentation--;
 }
@@ -430,11 +453,6 @@ void ASTPrinter::endVisit(ModifierInvocation const&)
 }
 
 void ASTPrinter::endVisit(EventDefinition const&)
-{
-	m_indentation--;
-}
-
-void ASTPrinter::endVisit(TypeName const&)
 {
 	m_indentation--;
 }
@@ -510,6 +528,11 @@ void ASTPrinter::endVisit(Return const&)
 }
 
 void ASTPrinter::endVisit(Throw const&)
+{
+	m_indentation--;
+}
+
+void ASTPrinter::endVisit(EmitStatement const&)
 {
 	m_indentation--;
 }
@@ -591,8 +614,11 @@ void ASTPrinter::printSourcePart(ASTNode const& _node)
 	if (!m_source.empty())
 	{
 		SourceLocation const& location(_node.location());
-		*m_ostream << indentation() << "   Source: "
-				   << escaped(m_source.substr(location.start, location.end - location.start), false) << endl;
+		*m_ostream <<
+			indentation() <<
+			"   Source: " <<
+			Json::valueToQuotedString(m_source.substr(location.start, location.end - location.start).c_str()) <<
+			endl;
 	}
 }
 

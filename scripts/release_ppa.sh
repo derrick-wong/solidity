@@ -15,6 +15,27 @@
 ## It will clone the Solidity git from github, determine the version,
 ## create a source archive and push it to the ubuntu ppa servers.
 ##
+## This requires the following entries in /etc/dput.cf:
+##
+##  [ethereum-dev]
+##  fqdn			= ppa.launchpad.net
+##  method			= ftp
+##  incoming		= ~ethereum/ethereum-dev
+##  login			= anonymous
+##
+##  [ethereum]
+##  fqdn			= ppa.launchpad.net
+##  method			= ftp
+##  incoming		= ~ethereum/ethereum
+##  login			= anonymous
+##
+##  [ethereum-static]
+##  fqdn			= ppa.launchpad.net
+##  method			= ftp
+##  incoming		= ~ethereum/ethereum-static
+##  login			= anonymous
+
+##
 ##############################################################################
 
 set -ev
@@ -26,44 +47,63 @@ else
     branch=$1
 fi
 
-if [ "$branch" = develop ]
-then
-    pparepo=ethereum/ethereum-dev
-    ppafilesurl=https://launchpad.net/~ethereum/+archive/ubuntu/ethereum-dev/+files
-else
-    pparepo=ethereum/ethereum
-    ppafilesurl=https://launchpad.net/~ethereum/+archive/ubuntu/ethereum/+files
-fi
-
-keyid=703F83D0
+keyid=70D110489D66E2F6
 email=builds@ethereum.org
 packagename=solc
 
-for distribution in trusty vivid xenial yakkety zesty
+static_build_distribution=cosmic
+
+DISTRIBUTIONS="bionic cosmic disco"
+
+if [ branch != develop ]
+then
+    DISTRIBUTIONS="$DISTRIBUTIONS STATIC"
+fi
+
+for distribution in $DISTRIBUTIONS
 do
 cd /tmp/
+rm -rf $distribution
 mkdir $distribution
 cd $distribution
 
+if [ $distribution = STATIC ]
+then
+    pparepo=ethereum-static
+    SMTDEPENDENCY=""
+    CMAKE_OPTIONS="-DSOLC_LINK_STATIC=On"
+else
+    if [ "$branch" = develop ]
+    then
+        pparepo=ethereum-dev
+    else
+        pparepo=ethereum
+    fi
+    SMTDEPENDENCY="libcvc4-dev,
+               "
+    CMAKE_OPTIONS=""
+fi
+ppafilesurl=https://launchpad.net/~ethereum/+archive/ubuntu/${pparepo}/+files
+
 # Fetch source
-git clone --recursive https://github.com/ethereum/solidity.git -b "$branch"
+git clone --depth 2 --recursive https://github.com/ethereum/solidity.git -b "$branch"
 mv solidity solc
 
 # Fetch jsoncpp dependency
 mkdir -p ./solc/deps/downloads/ 2>/dev/null || true
-wget -O ./solc/deps/downloads/jsoncpp-1.7.7.tar.gz https://github.com/open-source-parsers/jsoncpp/archive/1.7.7.tar.gz
+wget -O ./solc/deps/downloads/jsoncpp-1.8.4.tar.gz https://github.com/open-source-parsers/jsoncpp/archive/1.8.4.tar.gz
 
 # Determine version
 cd solc
-version=`grep -oP "PROJECT_VERSION \"?\K[0-9.]+(?=\")"? CMakeLists.txt`
-commithash=`git rev-parse --short=8 HEAD`
-committimestamp=`git show --format=%ci HEAD | head -n 1`
-commitdate=`git show --format=%ci HEAD | head -n 1 | cut - -b1-10 | sed -e 's/-0?/./' | sed -e 's/-0?/./'`
+version=$($(dirname "$0")/get_version.sh)
+commithash=$(git rev-parse --short=8 HEAD)
+committimestamp=$(git show --format=%ci HEAD | head -n 1)
+commitdate=$(git show --format=%ci HEAD | head -n 1 | cut - -b1-10 | sed -e 's/-0?/./' | sed -e 's/-0?/./')
 
 echo "$commithash" > commit_hash.txt
 if [ $branch = develop ]
 then
-    debversion="$version-develop-$commitdate-$commithash"
+    debversion="$version~develop-$commitdate-$commithash"
 else
     debversion="$version"
     echo -n > prerelease.txt # proper release
@@ -87,9 +127,9 @@ Source: solc
 Section: science
 Priority: extra
 Maintainer: Christian (Buildserver key) <builds@ethereum.org>
-Build-Depends: debhelper (>= 9.0.0),
+Build-Depends: ${SMTDEPENDENCY}debhelper (>= 9.0.0),
                cmake,
-               g++-4.8,
+               g++,
                git,
                libgmp-dev,
                libboost-all-dev,
@@ -141,6 +181,9 @@ override_dh_auto_test:
 
 override_dh_shlibdeps:
 	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DINSTALL_LLLC=Off -DTESTS=OFF ${CMAKE_OPTIONS}
 EOF
 cat <<EOF > debian/copyright
 Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
@@ -192,10 +235,16 @@ EMAIL="$email" dch -v 1:${debversion}-${versionsuffix} "git build of ${commithas
 # build source package
 # If packages is rejected because original source is already present, add
 # -sd to remove it from the .changes file
-debuild -S -sa -us -uc
+# -d disables the build dependencies check
+debuild -S -d -sa -us -uc
 
 # prepare .changes file for Launchpad
-sed -i -e s/UNRELEASED/${distribution}/ -e s/urgency=medium/urgency=low/ ../*.changes
+if [ $distribution = STATIC ]
+then
+    sed -i -e s/UNRELEASED/${static_build_distribution}/ -e s/urgency=medium/urgency=low/ ../*.changes
+else
+    sed -i -e s/UNRELEASED/${distribution}/ -e s/urgency=medium/urgency=low/ ../*.changes
+fi
 
 # check if ubuntu already has the source tarball
 (
@@ -223,6 +272,6 @@ fi
 debsign --re-sign -k ${keyid} ../${packagename}_${debversion}-${versionsuffix}_source.changes
 
 # upload
-dput ppa:${pparepo} ../${packagename}_${debversion}-${versionsuffix}_source.changes
+dput ${pparepo} ../${packagename}_${debversion}-${versionsuffix}_source.changes
 
 done

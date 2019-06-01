@@ -14,40 +14,47 @@
 	You should have received a copy of the GNU General Public License
 	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
 */
-/** @file Assembly.cpp
- * @author Gav Wood <i@gavwood.com>
- * @date 2014
- */
 
-#include "AssemblyItem.h"
-#include <libevmasm/SemanticInformation.h>
+#include <libevmasm/AssemblyItem.h>
+
+#include <libdevcore/CommonData.h>
+#include <libdevcore/FixedHash.h>
+
 #include <fstream>
 
 using namespace std;
 using namespace dev;
 using namespace dev::eth;
 
+static_assert(sizeof(size_t) <= 8, "size_t must be at most 64-bits wide");
+
 AssemblyItem AssemblyItem::toSubAssemblyTag(size_t _subId) const
 {
 	assertThrow(data() < (u256(1) << 64), Exception, "Tag already has subassembly set.");
-
 	assertThrow(m_type == PushTag || m_type == Tag, Exception, "");
+	size_t tag = size_t(u256(data()) & 0xffffffffffffffffULL);
 	AssemblyItem r = *this;
 	r.m_type = PushTag;
-	r.setPushTagSubIdAndTag(_subId, size_t(data()));
+	r.setPushTagSubIdAndTag(_subId, tag);
 	return r;
 }
 
 pair<size_t, size_t> AssemblyItem::splitForeignPushTag() const
 {
 	assertThrow(m_type == PushTag || m_type == Tag, Exception, "");
-	return make_pair(size_t((data()) / (u256(1) << 64)) - 1, size_t(data()));
+	u256 combined = u256(data());
+	size_t subId = size_t((combined >> 64) - 1);
+	size_t tag = size_t(combined & 0xffffffffffffffffULL);
+	return make_pair(subId, tag);
 }
 
 void AssemblyItem::setPushTagSubIdAndTag(size_t _subId, size_t _tag)
 {
 	assertThrow(m_type == PushTag || m_type == Tag, Exception, "");
-	setData(_tag + (u256(_subId + 1) << 64));
+	u256 data = _tag;
+	if (_subId != size_t(-1))
+		data |= (u256(_subId) + 1) << 64;
+	setData(data);
 }
 
 unsigned AssemblyItem::bytesRequired(unsigned _addressLength) const
@@ -58,18 +65,19 @@ unsigned AssemblyItem::bytesRequired(unsigned _addressLength) const
 	case Tag: // 1 byte for the JUMPDEST
 		return 1;
 	case PushString:
-		return 33;
+		return 1 + 32;
 	case Push:
 		return 1 + max<unsigned>(1, dev::bytesRequired(data()));
 	case PushSubSize:
 	case PushProgramSize:
-		return 4;		// worst case: a 16MB program
+		return 1 + 4;		// worst case: a 16MB program
 	case PushTag:
 	case PushData:
 	case PushSub:
 		return 1 + _addressLength;
 	case PushLibraryAddress:
-		return 21;
+	case PushDeployTimeAddress:
+		return 1 + 20;
 	default:
 		break;
 	}
@@ -98,20 +106,24 @@ int AssemblyItem::returnValues() const
 	case PushSubSize:
 	case PushProgramSize:
 	case PushLibraryAddress:
+	case PushDeployTimeAddress:
 		return 1;
 	case Tag:
 		return 0;
-	default:;
+	default:
+		break;
 	}
 	return 0;
 }
 
 bool AssemblyItem::canBeFunctional() const
 {
+	if (m_jumpType != JumpType::Ordinary)
+		return false;
 	switch (m_type)
 	{
 	case Operation:
-		return !SemanticInformation::isDupInstruction(*this) && !SemanticInformation::isSwapInstruction(*this);
+		return !isDupInstruction(instruction()) && !isSwapInstruction(instruction());
 	case Push:
 	case PushString:
 	case PushTag:
@@ -120,12 +132,14 @@ bool AssemblyItem::canBeFunctional() const
 	case PushSubSize:
 	case PushProgramSize:
 	case PushLibraryAddress:
+	case PushDeployTimeAddress:
 		return true;
 	case Tag:
 		return false;
-	default:;
+	default:
+		break;
 	}
-	return 0;
+	return false;
 }
 
 string AssemblyItem::getJumpTypeAsString() const
@@ -156,7 +170,7 @@ string AssemblyItem::toAssemblyText() const
 		break;
 	}
 	case Push:
-		text = toHex(toCompactBigEndian(data(), 1), 1, HexPrefix::Add);
+		text = toHex(toCompactBigEndian(data(), 1), HexPrefix::Add);
 		break;
 	case PushString:
 		text = string("data_") + toHex(data());
@@ -191,6 +205,9 @@ string AssemblyItem::toAssemblyText() const
 	case PushLibraryAddress:
 		text = string("linkerSymbol(\"") + toHex(data()) + string("\")");
 		break;
+	case PushDeployTimeAddress:
+		text = string("deployTimeAddress()");
+		break;
 	case UndefinedItem:
 		assertThrow(false, AssemblyException, "Invalid assembly item.");
 		break;
@@ -214,14 +231,14 @@ ostream& dev::eth::operator<<(ostream& _out, AssemblyItem const& _item)
 	{
 	case Operation:
 		_out << " " << instructionInfo(_item.instruction()).name;
-		if (_item.instruction() == solidity::Instruction::JUMP || _item.instruction() == solidity::Instruction::JUMPI)
+		if (_item.instruction() == Instruction::JUMP || _item.instruction() == Instruction::JUMPI)
 			_out << "\t" << _item.getJumpTypeAsString();
 		break;
 	case Push:
-		_out << " PUSH " << hex << _item.data();
+		_out << " PUSH " << hex << _item.data() << dec;
 		break;
 	case PushString:
-		_out << " PushString"  << hex << (unsigned)_item.data();
+		_out << " PushString"  << hex << (unsigned)_item.data() << dec;
 		break;
 	case PushTag:
 	{
@@ -236,19 +253,25 @@ ostream& dev::eth::operator<<(ostream& _out, AssemblyItem const& _item)
 		_out << " Tag " << _item.data();
 		break;
 	case PushData:
-		_out << " PushData " << hex << (unsigned)_item.data();
+		_out << " PushData " << hex << (unsigned)_item.data() << dec;
 		break;
 	case PushSub:
-		_out << " PushSub " << hex << size_t(_item.data());
+		_out << " PushSub " << hex << size_t(_item.data()) << dec;
 		break;
 	case PushSubSize:
-		_out << " PushSubSize " << hex << size_t(_item.data());
+		_out << " PushSubSize " << hex << size_t(_item.data()) << dec;
 		break;
 	case PushProgramSize:
 		_out << " PushProgramSize";
 		break;
 	case PushLibraryAddress:
-		_out << " PushLibraryAddress " << hex << h256(_item.data()).abridgedMiddle();
+	{
+		string hash(h256((_item.data())).hex());
+		_out << " PushLibraryAddress " << hash.substr(0, 8) + "..." + hash.substr(hash.length() - 8);
+		break;
+	}
+	case PushDeployTimeAddress:
+		_out << " PushDeployTimeAddress";
 		break;
 	case UndefinedItem:
 		_out << " ???";

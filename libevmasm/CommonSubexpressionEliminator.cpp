@@ -23,13 +23,14 @@
 
 #include <functional>
 #include <boost/range/adaptor/reversed.hpp>
-#include <libdevcore/SHA3.h>
+#include <libdevcore/Keccak256.h>
 #include <libevmasm/CommonSubexpressionEliminator.h>
 #include <libevmasm/AssemblyItem.h>
 
 using namespace std;
 using namespace dev;
 using namespace dev::eth;
+using namespace langutil;
 
 vector<AssemblyItem> CommonSubexpressionEliminator::getOptimizedItems()
 {
@@ -160,7 +161,7 @@ AssemblyItems CSECodeGenerator::generateCode(
 				if (seqNr < _initialSequenceNumber)
 					// Invalid sequenced operation.
 					// @todo quick fix for now. Proper fix needs to choose representative with higher
-					// sequence number during dependency analyis.
+					// sequence number during dependency analysis.
 					BOOST_THROW_EXCEPTION(StackTooDeepException());
 				sequencedExpressions.insert(make_pair(seqNr, id));
 			}
@@ -220,6 +221,7 @@ void CSECodeGenerator::addDependencies(Id _c)
 	if (m_neededBy.count(_c))
 		return; // we already computed the dependencies for _c
 	ExpressionClasses::Expression expr = m_expressionClasses.representative(_c);
+	assertThrow(expr.item, OptimizerException, "");
 	if (expr.item->type() == UndefinedItem)
 		BOOST_THROW_EXCEPTION(
 			// If this exception happens, we need to find a different way to generate the

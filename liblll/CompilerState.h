@@ -21,12 +21,12 @@
 
 #pragma once
 
+#include <liblll/CodeFragment.h>
 #include <boost/spirit/include/support_utree.hpp>
-#include "CodeFragment.h"
 
 namespace dev
 {
-namespace eth
+namespace lll
 {
 
 struct Macro
@@ -40,7 +40,7 @@ struct CompilerState
 {
 	CompilerState();
 
-	CodeFragment const& getDef(std::string const& _s);
+	CodeFragment const& getDef(std::string const& _s) const;
 	void populateStandard();
 
 	unsigned stackSize = 128;

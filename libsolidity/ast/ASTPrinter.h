@@ -1,18 +1,18 @@
 /*
-    This file is part of solidity.
+	This file is part of solidity.
 
-    solidity is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+	solidity is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
 
-    solidity is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	solidity is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with solidity.  If not, see <http://www.gnu.org/licenses/>.
+	You should have received a copy of the GNU General Public License
+	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
 */
 /**
  * @author Christian <c@ethdev.com>
@@ -22,9 +22,9 @@
 
 #pragma once
 
-#include <ostream>
 #include <libsolidity/ast/ASTVisitor.h>
 #include <libsolidity/interface/GasEstimator.h>
+#include <ostream>
 
 namespace dev
 {
@@ -51,6 +51,7 @@ public:
 	bool visit(ImportDirective const& _node) override;
 	bool visit(ContractDefinition const& _node) override;
 	bool visit(InheritanceSpecifier const& _node) override;
+	bool visit(UsingForDirective const& _node) override;
 	bool visit(StructDefinition const& _node) override;
 	bool visit(EnumDefinition const& _node) override;
 	bool visit(EnumValue const& _node) override;
@@ -60,7 +61,6 @@ public:
 	bool visit(ModifierDefinition const& _node) override;
 	bool visit(ModifierInvocation const& _node) override;
 	bool visit(EventDefinition const& _node) override;
-	bool visit(TypeName const& _node) override;
 	bool visit(ElementaryTypeName const& _node) override;
 	bool visit(UserDefinedTypeName const& _node) override;
 	bool visit(FunctionTypeName const& _node) override;
@@ -76,6 +76,7 @@ public:
 	bool visit(Break const& _node) override;
 	bool visit(Return const& _node) override;
 	bool visit(Throw const& _node) override;
+	bool visit(EmitStatement const& _node) override;
 	bool visit(VariableDeclarationStatement const& _node) override;
 	bool visit(ExpressionStatement const& _node) override;
 	bool visit(Conditional const& _node) override;
@@ -95,6 +96,7 @@ public:
 	void endVisit(ImportDirective const&) override;
 	void endVisit(ContractDefinition const&) override;
 	void endVisit(InheritanceSpecifier const&) override;
+	void endVisit(UsingForDirective const&) override;
 	void endVisit(StructDefinition const&) override;
 	void endVisit(EnumDefinition const&) override;
 	void endVisit(EnumValue const&) override;
@@ -104,7 +106,6 @@ public:
 	void endVisit(ModifierDefinition const&) override;
 	void endVisit(ModifierInvocation const&) override;
 	void endVisit(EventDefinition const&) override;
-	void endVisit(TypeName const&) override;
 	void endVisit(ElementaryTypeName const&) override;
 	void endVisit(UserDefinedTypeName const&) override;
 	void endVisit(FunctionTypeName const&) override;
@@ -120,6 +121,7 @@ public:
 	void endVisit(Break const&) override;
 	void endVisit(Return const&) override;
 	void endVisit(Throw const&) override;
+	void endVisit(EmitStatement const&) override;
 	void endVisit(VariableDeclarationStatement const&) override;
 	void endVisit(ExpressionStatement const&) override;
 	void endVisit(Conditional const&) override;
@@ -146,7 +148,7 @@ private:
 	std::string m_source;
 	ASTNode const* m_ast;
 	GasEstimator::ASTGasConsumption m_gasCosts;
-	std::ostream* m_ostream;
+	std::ostream* m_ostream = nullptr;
 };
 
 }

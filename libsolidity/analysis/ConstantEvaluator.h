@@ -24,6 +24,11 @@
 
 #include <libsolidity/ast/ASTVisitor.h>
 
+namespace langutil
+{
+class ErrorReporter;
+}
+
 namespace dev
 {
 namespace solidity
@@ -37,13 +42,33 @@ class TypeChecker;
 class ConstantEvaluator: private ASTConstVisitor
 {
 public:
-	ConstantEvaluator(Expression const& _expr) { _expr.accept(*this); }
+	ConstantEvaluator(
+		langutil::ErrorReporter& _errorReporter,
+		size_t _newDepth = 0,
+		std::shared_ptr<std::map<ASTNode const*, TypePointer>> _types = std::make_shared<std::map<ASTNode const*, TypePointer>>()
+	):
+		m_errorReporter(_errorReporter),
+		m_depth(_newDepth),
+		m_types(_types)
+	{
+	}
+
+	TypePointer evaluate(Expression const& _expr);
 
 private:
 	virtual void endVisit(BinaryOperation const& _operation);
 	virtual void endVisit(UnaryOperation const& _operation);
 	virtual void endVisit(Literal const& _literal);
+	virtual void endVisit(Identifier const& _identifier);
+	virtual void endVisit(TupleExpression const& _tuple);
 
+	void setType(ASTNode const& _node, TypePointer const& _type);
+	TypePointer type(ASTNode const& _node);
+
+	langutil::ErrorReporter& m_errorReporter;
+	/// Current recursion depth.
+	size_t m_depth = 0;
+	std::shared_ptr<std::map<ASTNode const*, TypePointer>> m_types;
 };
 
 }

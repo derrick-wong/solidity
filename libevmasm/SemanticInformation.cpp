@@ -28,13 +28,14 @@ using namespace std;
 using namespace dev;
 using namespace dev::eth;
 
-bool SemanticInformation::breaksCSEAnalysisBlock(AssemblyItem const& _item)
+bool SemanticInformation::breaksCSEAnalysisBlock(AssemblyItem const& _item, bool _msizeImportant)
 {
 	switch (_item.type())
 	{
 	default:
 	case UndefinedItem:
 	case Tag:
+	case PushDeployTimeAddress:
 		return true;
 	case Push:
 	case PushString:
@@ -57,6 +58,11 @@ bool SemanticInformation::breaksCSEAnalysisBlock(AssemblyItem const& _item)
 		if (_item.instruction() == Instruction::SSTORE)
 			return false;
 		if (_item.instruction() == Instruction::MSTORE)
+			return false;
+		if (!_msizeImportant && (
+			_item.instruction() == Instruction::MLOAD ||
+			_item.instruction() == Instruction::KECCAK256
+		))
 			return false;
 		//@todo: We do not handle the following memory instructions for now:
 		// calldatacopy, codecopy, extcodecopy, mstore8,
@@ -90,19 +96,19 @@ bool SemanticInformation::isDupInstruction(AssemblyItem const& _item)
 {
 	if (_item.type() != Operation)
 		return false;
-	return Instruction::DUP1 <= _item.instruction() && _item.instruction() <= Instruction::DUP16;
+	return dev::eth::isDupInstruction(_item.instruction());
 }
 
 bool SemanticInformation::isSwapInstruction(AssemblyItem const& _item)
 {
 	if (_item.type() != Operation)
 		return false;
-	return Instruction::SWAP1 <= _item.instruction() && _item.instruction() <= Instruction::SWAP16;
+	return dev::eth::isSwapInstruction(_item.instruction());
 }
 
 bool SemanticInformation::isJumpInstruction(AssemblyItem const& _item)
 {
-	return _item == AssemblyItem(Instruction::JUMP) || _item == AssemblyItem(Instruction::JUMPI);
+	return _item == Instruction::JUMP || _item == Instruction::JUMPI;
 }
 
 bool SemanticInformation::altersControlFlow(AssemblyItem const& _item)
@@ -126,6 +132,28 @@ bool SemanticInformation::altersControlFlow(AssemblyItem const& _item)
 	}
 }
 
+bool SemanticInformation::terminatesControlFlow(AssemblyItem const& _item)
+{
+	if (_item.type() != Operation)
+		return false;
+	else
+		return terminatesControlFlow(_item.instruction());
+}
+
+bool SemanticInformation::terminatesControlFlow(Instruction _instruction)
+{
+	switch (_instruction)
+	{
+	case Instruction::RETURN:
+	case Instruction::SELFDESTRUCT:
+	case Instruction::STOP:
+	case Instruction::INVALID:
+	case Instruction::REVERT:
+		return true;
+	default:
+		return false;
+	}
+}
 
 bool SemanticInformation::isDeterministic(AssemblyItem const& _item)
 {
@@ -145,12 +173,55 @@ bool SemanticInformation::isDeterministic(AssemblyItem const& _item)
 	case Instruction::MSIZE: // depends on previous writes and reads, not only on content
 	case Instruction::BALANCE: // depends on previous calls
 	case Instruction::EXTCODESIZE:
+	case Instruction::EXTCODEHASH:
 	case Instruction::RETURNDATACOPY: // depends on previous calls
 	case Instruction::RETURNDATASIZE:
 		return false;
 	default:
 		return true;
 	}
+}
+
+bool SemanticInformation::movable(Instruction _instruction)
+{
+	// These are not really functional.
+	if (isDupInstruction(_instruction) || isSwapInstruction(_instruction))
+		return false;
+	InstructionInfo info = instructionInfo(_instruction);
+	if (info.sideEffects)
+		return false;
+	switch (_instruction)
+	{
+	case Instruction::KECCAK256:
+	case Instruction::BALANCE:
+	case Instruction::EXTCODESIZE:
+	case Instruction::EXTCODEHASH:
+	case Instruction::RETURNDATASIZE:
+	case Instruction::SLOAD:
+	case Instruction::PC:
+	case Instruction::MSIZE:
+	case Instruction::GAS:
+		return false;
+	default:
+		return true;
+	}
+	return true;
+}
+
+bool SemanticInformation::sideEffectFree(Instruction _instruction)
+{
+	// These are not really functional.
+	assertThrow(!isDupInstruction(_instruction) && !isSwapInstruction(_instruction), AssemblyException, "");
+
+	return !instructionInfo(_instruction).sideEffects;
+}
+
+bool SemanticInformation::sideEffectFreeIfNoMSize(Instruction _instruction)
+{
+	if (_instruction == Instruction::KECCAK256 || _instruction == Instruction::MLOAD)
+		return true;
+	else
+		return sideEffectFree(_instruction);
 }
 
 bool SemanticInformation::invalidatesMemory(Instruction _instruction)
@@ -187,4 +258,58 @@ bool SemanticInformation::invalidatesStorage(Instruction _instruction)
 	default:
 		return false;
 	}
+}
+
+bool SemanticInformation::invalidInPureFunctions(Instruction _instruction)
+{
+	switch (_instruction)
+	{
+	case Instruction::ADDRESS:
+	case Instruction::BALANCE:
+	case Instruction::ORIGIN:
+	case Instruction::CALLER:
+	case Instruction::CALLVALUE:
+	case Instruction::GAS:
+	case Instruction::GASPRICE:
+	case Instruction::EXTCODESIZE:
+	case Instruction::EXTCODECOPY:
+	case Instruction::EXTCODEHASH:
+	case Instruction::BLOCKHASH:
+	case Instruction::COINBASE:
+	case Instruction::TIMESTAMP:
+	case Instruction::NUMBER:
+	case Instruction::DIFFICULTY:
+	case Instruction::GASLIMIT:
+	case Instruction::STATICCALL:
+	case Instruction::SLOAD:
+		return true;
+	default:
+		break;
+	}
+	return invalidInViewFunctions(_instruction);
+}
+
+bool SemanticInformation::invalidInViewFunctions(Instruction _instruction)
+{
+	switch (_instruction)
+	{
+	case Instruction::SSTORE:
+	case Instruction::JUMP:
+	case Instruction::JUMPI:
+	case Instruction::LOG0:
+	case Instruction::LOG1:
+	case Instruction::LOG2:
+	case Instruction::LOG3:
+	case Instruction::LOG4:
+	case Instruction::CREATE:
+	case Instruction::CALL:
+	case Instruction::CALLCODE:
+	case Instruction::DELEGATECALL:
+	case Instruction::CREATE2:
+	case Instruction::SELFDESTRUCT:
+		return true;
+	default:
+		break;
+	}
+	return false;
 }

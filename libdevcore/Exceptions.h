@@ -14,23 +14,16 @@
 	You should have received a copy of the GNU General Public License
 	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
 */
-/** @file Exceptions.h
- * @author Gav Wood <i@gavwood.com>
- * @date 2014
- */
 
 #pragma once
 
-#include <exception>
-#include <string>
 #include <boost/exception/exception.hpp>
 #include <boost/exception/info.hpp>
 #include <boost/exception/info_tuple.hpp>
 #include <boost/exception/diagnostic_information.hpp>
-#include <boost/throw_exception.hpp>
-#include <boost/tuple/tuple.hpp>
-#include "CommonData.h"
-#include "FixedHash.h"
+
+#include <exception>
+#include <string>
 
 namespace dev
 {
@@ -38,20 +31,23 @@ namespace dev
 /// Base class for all exceptions.
 struct Exception: virtual std::exception, virtual boost::exception
 {
-	Exception(std::string _message = std::string()): m_message(std::move(_message)) {}
-	const char* what() const noexcept override { return m_message.empty() ? std::exception::what() : m_message.c_str(); }
+	char const* what() const noexcept override;
 
 	/// @returns "FileName:LineNumber" referring to the point where the exception was thrown.
 	std::string lineInfo() const;
 
+	/// @returns the errinfo_comment of this exception.
+	std::string const* comment() const noexcept;
+
 private:
-	std::string m_message;
 };
 
 #define DEV_SIMPLE_EXCEPTION(X) struct X: virtual Exception { const char* what() const noexcept override { return #X; } }
 
+DEV_SIMPLE_EXCEPTION(InvalidAddress);
 DEV_SIMPLE_EXCEPTION(BadHexCharacter);
 DEV_SIMPLE_EXCEPTION(FileError);
+DEV_SIMPLE_EXCEPTION(DataTooLong);
 
 // error information to be added to exceptions
 using errinfo_invalidSymbol = boost::error_info<struct tag_invalidSymbol, char>;

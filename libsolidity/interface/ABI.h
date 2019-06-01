@@ -20,9 +20,9 @@
 
 #pragma once
 
-#include <string>
-#include <memory>
 #include <json/json.h>
+#include <memory>
+#include <string>
 
 namespace dev
 {
@@ -32,7 +32,7 @@ namespace solidity
 // Forward declarations
 class ContractDefinition;
 class Type;
-using TypePointer = std::shared_ptr<Type const>;
+using TypePointer = Type const*;
 
 class ABI
 {
@@ -50,6 +50,10 @@ private:
 		std::vector<TypePointer> const& _types,
 		bool _forLibrary
 	);
+	/// @returns a Json object with "name", "type" and potentially "components" keys, according
+	/// to the ABI specification.
+	/// If it is possible to express the type as a single string, it is allowed to return a single string.
+	static Json::Value formatType(std::string const& _name, Type const& _type, bool _forLibrary);
 };
 
 }

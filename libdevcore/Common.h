@@ -37,86 +37,44 @@
 #pragma warning(disable:3682) //call through incomplete class
 #endif
 
-#include <map>
-#include <unordered_map>
-#include <vector>
-#include <set>
-#include <unordered_set>
-#include <functional>
-#include <string>
-#include <chrono>
+#include <libdevcore/vector_ref.h>
 
-#if defined(__GNUC__)
-#pragma warning(push)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#endif // defined(__GNUC__)
-
-// See https://github.com/ethereum/libweb3core/commit/90680a8c25bfb48b24371b4abcacde56c181517c
-// See https://svn.boost.org/trac/boost/ticket/11328
-// Bob comment - perhaps we should just HARD FAIL here with Boost-1.58.00?
-// It is quite old now, and requiring end-users to use a newer Boost release is probably not unreasonable.
 #include <boost/version.hpp>
-#if (BOOST_VERSION == 105800)
-	#include "boost_multiprecision_number_compare_bug_workaround.hpp"
-#endif // (BOOST_VERSION == 105800)
+#if (BOOST_VERSION < 106500)
+#error "Unsupported Boost version. At least 1.65 required."
+#endif
 
 #include <boost/multiprecision/cpp_int.hpp>
 
-#if defined(__GNUC__)
-#pragma warning(pop)
-#pragma GCC diagnostic pop
-#endif // defined(__GNUC__)
-
-#include "vector_ref.h"
-
-using byte = uint8_t;
-
-// Quote a given token stream to turn it into a string.
-#define DEV_QUOTED_HELPER(s) #s
-#define DEV_QUOTED(s) DEV_QUOTED_HELPER(s)
+#include <map>
+#include <vector>
+#include <functional>
+#include <string>
 
 namespace dev
 {
 
 // Binary data types.
-using bytes = std::vector<byte>;
-using bytesRef = vector_ref<byte>;
-using bytesConstRef = vector_ref<byte const>;
+using bytes = std::vector<uint8_t>;
+using bytesRef = vector_ref<uint8_t>;
+using bytesConstRef = vector_ref<uint8_t const>;
 
 // Numeric types.
 using bigint = boost::multiprecision::number<boost::multiprecision::cpp_int_backend<>>;
-using u64 =  boost::multiprecision::number<boost::multiprecision::cpp_int_backend<64, 64, boost::multiprecision::unsigned_magnitude, boost::multiprecision::unchecked, void>>;
-using u128 =  boost::multiprecision::number<boost::multiprecision::cpp_int_backend<128, 128, boost::multiprecision::unsigned_magnitude, boost::multiprecision::unchecked, void>>;
-using u256 =  boost::multiprecision::number<boost::multiprecision::cpp_int_backend<256, 256, boost::multiprecision::unsigned_magnitude, boost::multiprecision::unchecked, void>>;
-using s256 =  boost::multiprecision::number<boost::multiprecision::cpp_int_backend<256, 256, boost::multiprecision::signed_magnitude, boost::multiprecision::unchecked, void>>;
-using u160 =  boost::multiprecision::number<boost::multiprecision::cpp_int_backend<160, 160, boost::multiprecision::unsigned_magnitude, boost::multiprecision::unchecked, void>>;
-using s160 =  boost::multiprecision::number<boost::multiprecision::cpp_int_backend<160, 160, boost::multiprecision::signed_magnitude, boost::multiprecision::unchecked, void>>;
-using u512 =  boost::multiprecision::number<boost::multiprecision::cpp_int_backend<512, 512, boost::multiprecision::unsigned_magnitude, boost::multiprecision::unchecked, void>>;
-using s512 =  boost::multiprecision::number<boost::multiprecision::cpp_int_backend<512, 512, boost::multiprecision::signed_magnitude, boost::multiprecision::unchecked, void>>;
-using u256s = std::vector<u256>;
-using u160s = std::vector<u160>;
-using u256Set = std::set<u256>;
-using u160Set = std::set<u160>;
+using u256 = boost::multiprecision::number<boost::multiprecision::cpp_int_backend<256, 256, boost::multiprecision::unsigned_magnitude, boost::multiprecision::unchecked, void>>;
+using s256 = boost::multiprecision::number<boost::multiprecision::cpp_int_backend<256, 256, boost::multiprecision::signed_magnitude, boost::multiprecision::unchecked, void>>;
+using u160 = boost::multiprecision::number<boost::multiprecision::cpp_int_backend<160, 160, boost::multiprecision::unsigned_magnitude, boost::multiprecision::unchecked, void>>;
 
 // Map types.
 using StringMap = std::map<std::string, std::string>;
 
-// Hash types.
-using StringHashMap = std::unordered_map<std::string, std::string>;
-
 // String types.
 using strings = std::vector<std::string>;
-// Fixed-length string types.
-using string32 = std::array<char, 32>;
-
-// Null/Invalid values for convenience.
-static const bytes NullBytes;
 
 /// Interprets @a _u as a two's complement signed number and returns the resulting s256.
 inline s256 u2s(u256 _u)
 {
-	static const bigint c_end = bigint(1) << 256;
+	static bigint const c_end = bigint(1) << 256;
 	if (boost::multiprecision::bit_test(_u, 255))
 		return s256(-(c_end - _u));
 	else
@@ -126,11 +84,25 @@ inline s256 u2s(u256 _u)
 /// @returns the two's complement signed representation of the signed number _u.
 inline u256 s2u(s256 _u)
 {
-	static const bigint c_end = bigint(1) << 256;
-    if (_u >= 0)
+	static bigint const c_end = bigint(1) << 256;
+	if (_u >= 0)
 		return u256(_u);
-    else
+	else
 		return u256(c_end + _u);
+}
+
+inline u256 exp256(u256 _base, u256 _exponent)
+{
+	using boost::multiprecision::limb_type;
+	u256 result = 1;
+	while (_exponent)
+	{
+		if (boost::multiprecision::bit_test(_exponent, 0))
+			result *= _base;
+		_base *= _base;
+		_exponent >>= 1;
+	}
+	return result;
 }
 
 inline std::ostream& operator<<(std::ostream& os, bytes const& _bytes)
@@ -144,33 +116,15 @@ inline std::ostream& operator<<(std::ostream& os, bytes const& _bytes)
 	return os;
 }
 
-template <size_t n> inline u256 exp10()
-{
-	return exp10<n - 1>() * u256(10);
-}
-
-template <> inline u256 exp10<0>()
-{
-	return u256(1);
-}
-
 /// RAII utility class whose destructor calls a given function.
 class ScopeGuard
 {
 public:
-	ScopeGuard(std::function<void(void)> _f): m_f(_f) {}
+	explicit ScopeGuard(std::function<void(void)> _f): m_f(_f) {}
 	~ScopeGuard() { m_f(); }
 
 private:
 	std::function<void(void)> m_f;
-};
-
-enum class WithExisting: int
-{
-	Trust = 0,
-	Verify,
-	Rescue,
-	Kill
 };
 
 }

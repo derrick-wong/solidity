@@ -1,14 +1,40 @@
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DSTATICLIB")
+set(sources
+	Algorithms.h
+	AnsiColorized.h
+	Assertions.h
+	Common.h
+	CommonData.cpp
+	CommonData.h
+	CommonIO.cpp
+	CommonIO.h
+	Exceptions.cpp
+	Exceptions.h
+	FixedHash.h
+	IndentedWriter.cpp
+	IndentedWriter.h
+	InvertibleMap.h
+	IpfsHash.cpp
+	IpfsHash.h
+	JSON.cpp
+	JSON.h
+	Keccak256.cpp
+	Keccak256.h
+	picosha2.h
+	Result.h
+	StringUtils.cpp
+	StringUtils.h
+	SwarmHash.cpp
+	SwarmHash.h
+	UTF8.cpp
+	UTF8.h
+	vector_ref.h
+	Visitor.h
+	Whiskers.cpp
+	Whiskers.h
+)
 
-aux_source_directory(. SRC_LIST)
-
-set(EXECUTABLE soldevcore)
-
-file(GLOB HEADERS "*.h")
-
-include_directories(..)
-add_library(${EXECUTABLE} ${SRC_LIST} ${HEADERS})
-
-eth_use(${EXECUTABLE} REQUIRED Dev::base)
-
-install( TARGETS ${EXECUTABLE} RUNTIME DESTINATION bin ARCHIVE DESTINATION lib LIBRARY DESTINATION lib )
+add_library(devcore ${sources})
+target_link_libraries(devcore PUBLIC jsoncpp ${Boost_FILESYSTEM_LIBRARIES} ${Boost_REGEX_LIBRARIES} ${Boost_SYSTEM_LIBRARIES} Threads::Threads)
+target_include_directories(devcore PUBLIC "${CMAKE_SOURCE_DIR}")
+target_include_directories(devcore SYSTEM PUBLIC ${Boost_INCLUDE_DIRS})
+add_dependencies(devcore solidity_BuildInfo.h)

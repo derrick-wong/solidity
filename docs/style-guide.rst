@@ -25,7 +25,7 @@ solidity code.  The goal of this guide is *consistency*.  A quote from python's
 captures this concept well.
 
     A style guide is about consistency. Consistency with this style guide is important. Consistency within a project is more important. Consistency within one module or function is most important.
-    But most importantly: know when to be inconsistent -- sometimes the style guide just doesn't apply. When in doubt, use your best judgment. Look at other examples and decide what looks best. And don't hesitate to ask!
+    But most importantly: know when to be inconsistent -- sometimes the style guide just doesn't apply. When in doubt, use your best judgement. Look at other examples and decide what looks best. And don't hesitate to ask!
 
 
 ***********
@@ -52,31 +52,35 @@ Surround top level declarations in solidity source with two blank lines.
 
 Yes::
 
+    pragma solidity >=0.4.0 <0.7.0;
+
     contract A {
-        ...
+        // ...
     }
 
 
     contract B {
-        ...
+        // ...
     }
 
 
     contract C {
-        ...
+        // ...
     }
 
 No::
 
+    pragma solidity >=0.4.0 <0.7.0;
+
     contract A {
-        ...
+        // ...
     }
     contract B {
-        ...
+        // ...
     }
 
     contract C {
-        ...
+        // ...
     }
 
 Within a contract surround function declarations with a single blank line.
@@ -85,32 +89,141 @@ Blank lines may be omitted between groups of related one-liners (such as stub fu
 
 Yes::
 
+    pragma solidity >=0.4.0 <0.7.0;
+
     contract A {
-        function spam();
-        function ham();
+        function spam() public pure;
+        function ham() public pure;
     }
 
 
     contract B is A {
-        function spam() {
-            ...
+        function spam() public pure {
+            // ...
         }
 
-        function ham() {
-            ...
+        function ham() public pure {
+            // ...
         }
     }
 
 No::
 
+    pragma solidity >=0.4.0 <0.7.0;
+
     contract A {
-        function spam() {
-            ...
+        function spam() public pure {
+            // ...
         }
-        function ham() {
-            ...
+        function ham() public pure {
+            // ...
         }
     }
+
+.. _maximum_line_length:
+
+Maximum Line Length
+===================
+
+Keeping lines under the `PEP 8 recommendation <https://www.python.org/dev/peps/pep-0008/#maximum-line-length>`_ to a maximum of 79 (or 99)
+characters helps readers easily parse the code.
+
+Wrapped lines should conform to the following guidelines.
+
+1. The first argument should not be attached to the opening parenthesis.
+2. One, and only one, indent should be used.
+3. Each argument should fall on its own line.
+4. The terminating element, :code:`);`, should be placed on the final line by itself.
+
+Function Calls
+
+Yes::
+
+    thisFunctionCallIsReallyLong(
+        longArgument1,
+        longArgument2,
+        longArgument3
+    );
+
+No::
+
+    thisFunctionCallIsReallyLong(longArgument1,
+                                  longArgument2,
+                                  longArgument3
+    );
+
+    thisFunctionCallIsReallyLong(longArgument1,
+        longArgument2,
+        longArgument3
+    );
+
+    thisFunctionCallIsReallyLong(
+        longArgument1, longArgument2,
+        longArgument3
+    );
+
+    thisFunctionCallIsReallyLong(
+    longArgument1,
+    longArgument2,
+    longArgument3
+    );
+
+    thisFunctionCallIsReallyLong(
+        longArgument1,
+        longArgument2,
+        longArgument3);
+
+Assignment Statements
+
+Yes::
+
+    thisIsALongNestedMapping[being][set][to_some_value] = someFunction(
+        argument1,
+        argument2,
+        argument3,
+        argument4
+    );
+
+No::
+
+    thisIsALongNestedMapping[being][set][to_some_value] = someFunction(argument1,
+                                                                       argument2,
+                                                                       argument3,
+                                                                       argument4);
+
+Event Definitions and Event Emitters
+
+Yes::
+
+    event LongAndLotsOfArgs(
+        address sender,
+        address recipient,
+        uint256 publicKey,
+        uint256 amount,
+        bytes32[] options
+    );
+
+    LongAndLotsOfArgs(
+        sender,
+        recipient,
+        publicKey,
+        amount,
+        options
+    );
+
+No::
+
+    event LongAndLotsOfArgs(address sender,
+                            address recipient,
+                            uint256 publicKey,
+                            uint256 amount,
+                            bytes32[] options);
+
+    LongAndLotsOfArgs(sender,
+                      recipient,
+                      publicKey,
+                      amount,
+                      options);
 
 Source File Encoding
 ====================
@@ -124,30 +237,32 @@ Import statements should always be placed at the top of the file.
 
 Yes::
 
-    import "owned";
+    pragma solidity >=0.4.0 <0.7.0;
 
+    import "./Owned.sol";
 
     contract A {
-        ...
+        // ...
     }
 
-
-    contract B is owned {
-        ...
+    contract B is Owned {
+        // ...
     }
 
 No::
 
+    pragma solidity >=0.4.0 <0.7.0;
+
     contract A {
-        ...
+        // ...
     }
 
 
-    import "owned";
+    import "./Owned.sol";
 
 
-    contract B is owned {
-        ...
+    contract B is Owned {
+        // ...
     }
 
 Order of Functions
@@ -164,41 +279,52 @@ Functions should be grouped according to their visibility and ordered:
 - internal
 - private
 
-Within a grouping, place the ``constant`` functions last.
+Within a grouping, place the ``view`` and ``pure`` functions last.
 
 Yes::
 
+    pragma solidity >=0.4.0 <0.7.0;
+
     contract A {
-        function A() {
-            ...
+        constructor() public {
+            // ...
         }
-        
-        function() {
-            ...
+
+        function() external {
+            // ...
         }
-        
+
         // External functions
         // ...
-        
-        // External functions that are constant
+
+        // External functions that are view
         // ...
-        
+
+        // External functions that are pure
+        // ...
+
         // Public functions
         // ...
-        
+
         // Internal functions
         // ...
-        
+
         // Private functions
         // ...
     }
 
 No::
 
+    pragma solidity >=0.4.0 <0.7.0;
+
     contract A {
-        
+
         // External functions
         // ...
+
+        function() external {
+            // ...
+        }
 
         // Private functions
         // ...
@@ -206,16 +332,12 @@ No::
         // Public functions
         // ...
 
-        function A() {
-            ...
-        }
-        
-        function() {
-            ...
+        constructor() public {
+            // ...
         }
 
         // Internal functions
-        // ...       
+        // ...
     }
 
 Whitespace in Expressions
@@ -223,7 +345,7 @@ Whitespace in Expressions
 
 Avoid extraneous whitespace in the following  situations:
 
-Immediately inside parenthesis, brackets or braces, with the exception of single-line function declarations.
+Immediately inside parenthesis, brackets or braces, with the exception of single line function declarations.
 
 Yes::
 
@@ -235,17 +357,17 @@ No::
 
 Exception::
 
-    function singleLine() { spam(); }
+    function singleLine() public { spam(); }
 
 Immediately before a comma, semicolon:
 
 Yes::
 
-    function spam(uint i, Coin coin);
+    function spam(uint i, Coin coin) public;
 
 No::
 
-    function spam(uint i , Coin coin) ;
+    function spam(uint i , Coin coin) public ;
 
 More than one space around an assignment or other operator to align with
   another:
@@ -266,13 +388,13 @@ Don't include a whitespace in the fallback function:
 
 Yes::
 
-    function() {
+    function() external {
         ...
     }
 
 No::
-   
-    function () {
+
+    function () external {
         ...
     }
 
@@ -289,6 +411,8 @@ should:
 
 Yes::
 
+    pragma solidity >=0.4.0 <0.7.0;
+
     contract Coin {
         struct Bank {
             address owner;
@@ -297,6 +421,8 @@ Yes::
     }
 
 No::
+
+    pragma solidity >=0.4.0 <0.7.0;
 
     contract Coin
     {
@@ -391,37 +517,51 @@ function body to be kept on the same line as the function declaration.
 The closing brace should be at the same indentation level as the function
 declaration.
 
-The opening brace should be preceeded by a single space.
+The opening brace should be preceded by a single space.
 
 Yes::
 
-    function increment(uint x) returns (uint) {
+    function increment(uint x) public pure returns (uint) {
         return x + 1;
     }
 
-    function increment(uint x) public onlyowner returns (uint) {
+    function increment(uint x) public pure onlyowner returns (uint) {
         return x + 1;
     }
 
 No::
 
-    function increment(uint x) returns (uint)
+    function increment(uint x) public pure returns (uint)
     {
         return x + 1;
     }
 
-    function increment(uint x) returns (uint){
+    function increment(uint x) public pure returns (uint){
         return x + 1;
     }
 
-    function increment(uint x) returns (uint) {
+    function increment(uint x) public pure returns (uint) {
         return x + 1;
         }
 
-    function increment(uint x) returns (uint) {
+    function increment(uint x) public pure returns (uint) {
         return x + 1;}
 
-The visibility modifiers for a function should come before any custom
+You should explicitly label the visibility of all functions, including constructors.
+
+Yes::
+
+    function explicitlyPublic(uint val) public {
+        doSomething();
+    }
+
+No::
+
+    function implicitlyPublic(uint val) {
+        doSomething();
+    }
+
+The visibility modifier for a function should come before any custom
 modifiers.
 
 Yes::
@@ -450,14 +590,16 @@ Yes::
         address d,
         address e,
         address f
-    ) {
+    )
+        public
+    {
         doSomething();
     }
 
 No::
 
     function thisFunctionHasLotsOfArguments(address a, address b, address c,
-        address d, address e, address f) {
+        address d, address e, address f) public {
         doSomething();
     }
 
@@ -466,7 +608,7 @@ No::
                                             address c,
                                             address d,
                                             address e,
-                                            address f) {
+                                            address f) public {
         doSomething();
     }
 
@@ -476,12 +618,12 @@ No::
         address c,
         address d,
         address e,
-        address f) {
+        address f) public {
         doSomething();
     }
 
 If a long function declaration has modifiers, then each modifier should be
-dropped to it's own line.
+dropped to its own line.
 
 Yes::
 
@@ -531,40 +673,126 @@ No::
         doSomething();
     }
 
+Multiline output parameters and return statements should follow the same style recommended for wrapping long lines found in the :ref:`Maximum Line Length <maximum_line_length>` section.
+
+Yes::
+
+    function thisFunctionNameIsReallyLong(
+        address a,
+        address b,
+        address c
+    )
+        public
+        returns (
+            address someAddressName,
+            uint256 LongArgument,
+            uint256 Argument
+        )
+    {
+        doSomething()
+
+        return (
+            veryLongReturnArg1,
+            veryLongReturnArg2,
+            veryLongReturnArg3
+        );
+    }
+
+No::
+
+    function thisFunctionNameIsReallyLong(
+        address a,
+        address b,
+        address c
+    )
+        public
+        returns (address someAddressName,
+                 uint256 LongArgument,
+                 uint256 Argument)
+    {
+        doSomething()
+
+        return (veryLongReturnArg1,
+                veryLongReturnArg1,
+                veryLongReturnArg1);
+    }
+
 For constructor functions on inherited contracts whose bases require arguments,
 it is recommended to drop the base constructors onto new lines in the same
 manner as modifiers if the function declaration is long or hard to read.
 
 Yes::
 
+    pragma solidity >=0.4.0 <0.7.0;
+
+    // Base contracts just to make this compile
+    contract B {
+        constructor(uint) public {
+        }
+    }
+    contract C {
+        constructor(uint, uint) public {
+        }
+    }
+    contract D {
+        constructor(uint) public {
+        }
+    }
+
     contract A is B, C, D {
-        function A(uint param1, uint param2, uint param3, uint param4, uint param5)
+        uint x;
+
+        constructor(uint param1, uint param2, uint param3, uint param4, uint param5)
             B(param1)
             C(param2, param3)
             D(param4)
+            public
         {
             // do something with param5
+            x = param5;
         }
     }
 
 No::
 
-    contract A is B, C, D {
-        function A(uint param1, uint param2, uint param3, uint param4, uint param5)
-        B(param1)
-        C(param2, param3)
-        D(param4)
-        {
-            // do something with param5
+    pragma solidity >=0.4.0 <0.7.0;
+
+    // Base contracts just to make this compile
+    contract B {
+        constructor(uint) public {
+        }
+    }
+    contract C {
+        constructor(uint, uint) public {
+        }
+    }
+    contract D {
+        constructor(uint) public {
         }
     }
 
     contract A is B, C, D {
-        function A(uint param1, uint param2, uint param3, uint param4, uint param5)
+        uint x;
+
+        constructor(uint param1, uint param2, uint param3, uint param4, uint param5)
+        B(param1)
+        C(param2, param3)
+        D(param4)
+        public
+        {
+            x = param5;
+        }
+    }
+
+    contract X is B, C, D {
+        uint x;
+
+        constructor(uint param1, uint param2, uint param3, uint param4, uint param5)
             B(param1)
             C(param2, param3)
-            D(param4) {
-            // do something with param5
+            D(param4)
+            public {
+            x = param5;
         }
     }
 
@@ -572,7 +800,7 @@ When declaring short functions with a single statement, it is permissible to do 
 
 Permissible::
 
-    function shortFunction() { doSomething(); }
+    function shortFunction() public { doSomething(); }
 
 These guidelines for function declarations are intended to improve readability.
 Authors should use their best judgement as this guide does not try to cover all
@@ -581,7 +809,23 @@ possible permutations for function declarations.
 Mappings
 ========
 
-TODO
+In variable declarations, do not separate the keyword ``mapping`` from its
+type by a space. Do not separate any nested ``mapping`` keyword from its type by
+whitespace.
+
+Yes::
+
+    mapping(uint => uint) map;
+    mapping(address => bool) registeredAddresses;
+    mapping(uint => mapping(bool => Data[])) public data;
+    mapping(uint => mapping(uint => s)) data;
+
+No::
+
+    mapping (uint => uint) map;
+    mapping( address => bool ) registeredAddresses;
+    mapping (uint => mapping (bool => Data[])) public data;
+    mapping(uint => mapping (uint => s)) data;
 
 Variable Declarations
 =====================
@@ -646,6 +890,29 @@ No::
     x = y+z;
     x +=1;
 
+***************
+Order of Layout
+***************
+
+Layout contract elements in the following order:
+
+1. Pragma statements
+2. Import statements
+3. Interfaces
+4. Libraries
+5. Contracts
+
+Inside each contract, library or interface, use the following order:
+
+1. Type declarations
+2. State variables
+3. Events
+4. Functions
+
+.. note::
+
+    It might be clearer to declare types close to their use in events or state
+    variables.
 
 ******************
 Naming Conventions
@@ -659,7 +926,7 @@ The naming recommendations given here are intended to improve the readability,
 and thus they are not rules, but rather guidelines to try and help convey the
 most information through the names of things.
 
-Lastly, consistency within a codebase should always supercede any conventions
+Lastly, consistency within a codebase should always supersede any conventions
 outlined in this document.
 
 
@@ -679,7 +946,7 @@ naming styles.
 * ``mixedCase`` (differs from CapitalizedWords by initial lowercase character!)
 * ``Capitalized_Words_With_Underscores``
 
-.. note:: When using abbreviations in CapWords, capitalize all the letters of the abbreviation. Thus HTTPServerError is better than HttpServerError.
+.. note:: When using initialisms in CapWords, capitalize all the letters of the initialisms. Thus HTTPServerError is better than HttpServerError. When using initialisms is mixedCase, capitalize all the letters of the initialisms, except keep the first one lower case if it is the beginning of the name. Thus xmlHTTPRequest is better than XMLHTTPRequest.
 
 
 Names to Avoid
@@ -696,57 +963,167 @@ indistinguishable from the numerals one and zero.
 Contract and Library Names
 ==========================
 
-Contracts and libraries should be named using the CapWords style.
+* Contracts and libraries should be named using the CapWords style. Examples: ``SimpleToken``, ``SmartBank``, ``CertificateHashRepository``, ``Player``, ``Congress``, ``Owned``.
+* Contract and library names should also match their filenames.
+* If a contract file includes multiple contracts and/or libraries, then the filename should match the *core contract*. This is not recommended however if it can be avoided.
+
+As shown in the example below, if the contract name is `Congress` and the library name is `Owned`, then their associated filenames should be `Congress.sol` and `Owned.sol`.
+
+Yes::
+
+    pragma solidity >=0.4.0 <0.7.0;
+
+    // Owned.sol
+    contract Owned {
+         address public owner;
+
+         constructor() public {
+             owner = msg.sender;
+         }
+
+         modifier onlyOwner {
+             require(msg.sender == owner);
+             _;
+         }
+
+         function transferOwnership(address newOwner) public onlyOwner {
+             owner = newOwner;
+         }
+    }
+
+    // Congress.sol
+    import "./Owned.sol";
+
+    contract Congress is Owned, TokenRecipient {
+        //...
+    }
+
+No::
+
+    pragma solidity >=0.4.0 <0.7.0;
+
+    // owned.sol
+    contract owned {
+         address public owner;
+
+         constructor() public {
+             owner = msg.sender;
+         }
+
+         modifier onlyOwner {
+             require(msg.sender == owner);
+             _;
+         }
+
+         function transferOwnership(address newOwner) public onlyOwner {
+             owner = newOwner;
+         }
+    }
+
+    // Congress.sol
+    import "./owned.sol";
+
+    contract Congress is owned, tokenRecipient {
+        //...
+    }
 
 
-Events
-======
+Struct Names
+==========================
 
-Events should be named using the CapWords style.
+Structs should be named using the CapWords style. Examples: ``MyCoin``, ``Position``, ``PositionXY``.
+
+
+Event Names
+===========
+
+Events should be named using the CapWords style. Examples: ``Deposit``, ``Transfer``, ``Approval``, ``BeforeTransfer``, ``AfterTransfer``.
 
 
 Function Names
 ==============
 
-Functions should use mixedCase.
+Functions other than constructors should use mixedCase. Examples: ``getBalance``, ``transfer``, ``verifyOwner``, ``addMember``, ``changeOwner``.
 
 
-Function Arguments
-==================
+Function Argument Names
+=======================
+
+Function arguments should use mixedCase. Examples: ``initialSupply``, ``account``, ``recipientAddress``, ``senderAddress``, ``newOwner``.
 
 When writing library functions that operate on a custom struct, the struct
 should be the first argument and should always be named ``self``.
 
 
-Local and State Variables
-=========================
+Local and State Variable Names
+==============================
 
-Use mixedCase.
+Use mixedCase. Examples: ``totalSupply``, ``remainingSupply``, ``balancesOf``, ``creatorAddress``, ``isPreSale``, ``tokenExchangeRate``.
 
 
 Constants
 =========
 
 Constants should be named with all capital letters with underscores separating
-words.  (for example:``MAX_BLOCKS``)
+words. Examples: ``MAX_BLOCKS``, ``TOKEN_NAME``, ``TOKEN_TICKER``, ``CONTRACT_VERSION``.
 
 
-Modifiers
-=========
+Modifier Names
+==============
 
-Use mixedCase.
+Use mixedCase. Examples: ``onlyBy``, ``onlyAfter``, ``onlyDuringThePreSale``.
 
 
-Avoiding Collisions
-===================
+Enums
+=====
+
+Enums, in the style of simple type declarations, should be named using the CapWords style. Examples: ``TokenGroup``, ``Frame``, ``HashStyle``, ``CharacterLocation``.
+
+
+Avoiding Naming Collisions
+==========================
 
 * ``single_trailing_underscore_``
 
 This convention is suggested when the desired name collides with that of a
 built-in or otherwise reserved name.
 
+*******
+NatSpec
+*******
 
-General Recommendations
-=======================
+Solidity contracts can have a form of comments that are the basis of the
+Ethereum Natural Language Specification Format.
 
-TODO
+Add comments above functions or contracts following `doxygen <http://www.doxygen.nl>`_ notation
+of one or multiple lines starting with `///` or a
+multiline comment starting with `/**` and ending with `*/`.
+
+For example, the contract from `a simple smart contract <simple-smart-contract>`_ with the comments
+added looks like the one below::
+
+    pragma solidity >=0.4.0 <0.7.0;
+
+    /// @author The Solidity Team
+    /// @title A simple storage example
+    contract SimpleStorage {
+        uint storedData;
+
+        /// Store `x`.
+        /// @param x the new value to store
+        /// @dev stores the number in the state variable `storedData`
+        function set(uint x) public {
+            storedData = x;
+        }
+
+        /// Return the stored value.
+        /// @dev retrieves the value of the state variable `storedData`
+        /// @return the stored value
+        function get() public view returns (uint) {
+            return storedData;
+        }
+    }
+
+It is recommended that Solidity contracts are fully annontated using `NatSpec <natspec>`_ for all public interfaces (everything in the ABI).
+
+Please see the section about `NatSpec <natspec>`_ for a detailed explanation.

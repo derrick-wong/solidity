@@ -20,10 +20,17 @@
  * Framework for executing contracts and testing them using RPC.
  */
 
-#include <cstdlib>
-#include <boost/test/framework.hpp>
-#include <libdevcore/CommonIO.h>
 #include <test/ExecutionFramework.h>
+
+#include <libdevcore/CommonIO.h>
+
+#include <boost/test/framework.hpp>
+#include <boost/algorithm/string/replace.hpp>
+
+#include <cstdlib>
+
+#include <chrono>
+#include <thread>
 
 using namespace std;
 using namespace dev;
@@ -31,25 +38,79 @@ using namespace dev::test;
 
 namespace // anonymous
 {
-	h256 const EmptyTrie("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421");
-}
+
+h256 const EmptyTrie("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421");
 
 string getIPCSocketPath()
 {
-	string ipcPath = dev::test::Options::get().ipcPath;
+	string ipcPath = dev::test::Options::get().ipcPath.string();
 	if (ipcPath.empty())
 		BOOST_FAIL("ERROR: ipcPath not set! (use --ipcpath <path> or the environment variable ETH_TEST_IPC)");
 
 	return ipcPath;
 }
 
-ExecutionFramework::ExecutionFramework() :
-	m_rpc(RPCSession::instance(getIPCSocketPath())),
-	m_optimize(dev::test::Options::get().optimize),
+}
+
+ExecutionFramework::ExecutionFramework():
+	ExecutionFramework(getIPCSocketPath(), dev::test::Options::get().evmVersion())
+{
+}
+
+ExecutionFramework::ExecutionFramework(string const& _ipcPath, langutil::EVMVersion _evmVersion):
+	m_rpc(RPCSession::instance(_ipcPath)),
+	m_evmVersion(_evmVersion),
+	m_optimiserSettings(solidity::OptimiserSettings::minimal()),
 	m_showMessages(dev::test::Options::get().showMessages),
 	m_sender(m_rpc.account(0))
 {
+	if (dev::test::Options::get().optimizeYul)
+		m_optimiserSettings = solidity::OptimiserSettings::full();
+	else if (dev::test::Options::get().optimize)
+		m_optimiserSettings = solidity::OptimiserSettings::standard();
 	m_rpc.test_rewindToBlock(0);
+}
+
+std::pair<bool, string> ExecutionFramework::compareAndCreateMessage(
+	bytes const& _result,
+	bytes const& _expectation
+)
+{
+	if (_result == _expectation)
+		return std::make_pair(true, std::string{});
+	std::string message =
+			"Invalid encoded data\n"
+			"   Result                                                           Expectation\n";
+	auto resultHex = boost::replace_all_copy(toHex(_result), "0", ".");
+	auto expectedHex = boost::replace_all_copy(toHex(_expectation), "0", ".");
+	for (size_t i = 0; i < std::max(resultHex.size(), expectedHex.size()); i += 0x40)
+	{
+		std::string result{i >= resultHex.size() ? string{} : resultHex.substr(i, 0x40)};
+		std::string expected{i > expectedHex.size() ? string{} : expectedHex.substr(i, 0x40)};
+		message +=
+			(result == expected ? "   " : " X ") +
+			result +
+			std::string(0x41 - result.size(), ' ') +
+			expected +
+			"\n";
+	}
+	return make_pair(false, message);
+}
+
+u256 ExecutionFramework::gasLimit() const
+{
+	auto latestBlock = m_rpc.eth_getBlockByNumber("latest", false);
+	return u256(latestBlock["gasLimit"].asString());
+}
+
+u256 ExecutionFramework::gasPrice() const
+{
+	return u256(m_rpc.eth_gasPrice());
+}
+
+u256 ExecutionFramework::blockHash(u256 const& _blockNumber) const
+{
+	return u256(m_rpc.eth_getBlockByNumber(toHex(_blockNumber, HexPrefix::Add), false)["hash"].asString());
 }
 
 void ExecutionFramework::sendMessage(bytes const& _data, bool _isCreation, u256 const& _value)
@@ -73,12 +134,13 @@ void ExecutionFramework::sendMessage(bytes const& _data, bool _isCreation, u256 
 	if (!_isCreation)
 	{
 		d.to = dev::toString(m_contractAddress);
-		BOOST_REQUIRE(m_rpc.eth_getCode(d.to, "latest").size() > 2);
+		BOOST_REQUIRE(m_rpc.eth_getCode(d.to, "pending").size() > 2);
 		// Use eth_call to get the output
-		m_output = fromHex(m_rpc.eth_call(d, "latest"), WhenError::Throw);
+		m_output = fromHex(m_rpc.eth_call(d, "pending"), WhenError::Throw);
 	}
 
 	string txHash = m_rpc.eth_sendTransaction(d);
+	m_rpc.rpcCall("eth_flush");
 	m_rpc.test_mineBlocks(1);
 	RPCSession::TransactionReceipt receipt(m_rpc.eth_getTransactionReceipt(txHash));
 
@@ -109,6 +171,11 @@ void ExecutionFramework::sendMessage(bytes const& _data, bool _isCreation, u256 
 		entry.data = fromHex(log.data, WhenError::Throw);
 		m_logs.push_back(entry);
 	}
+
+	if (!receipt.status.empty())
+		m_transactionSuccessful = (receipt.status == "1");
+	else
+		m_transactionSuccessful = (m_gas != m_gasUsed);
 }
 
 void ExecutionFramework::sendEther(Address const& _to, u256 const& _value)

@@ -23,11 +23,18 @@
 
 #pragma once
 
+#include <libdevcore/Common.h>
+#include <libevmasm/AssemblyItem.h>
+
 #include <vector>
 #include <map>
 #include <memory>
-#include <libdevcore/Common.h>
-#include <libevmasm/AssemblyItem.h>
+#include <set>
+
+namespace langutil
+{
+struct SourceLocation;
+}
 
 namespace dev
 {
@@ -80,7 +87,7 @@ public:
 	void forceEqual(Id _id, AssemblyItem const& _item, Ids const& _arguments, bool _copyItem = true);
 
 	/// @returns the id of a new class which is different to all other classes.
-	Id newClass(SourceLocation const& _location);
+	Id newClass(langutil::SourceLocation const& _location);
 
 	/// @returns true if the values of the given classes are known to be different (on every input).
 	/// @note that this function might still return false for some different inputs.
@@ -106,8 +113,7 @@ public:
 private:
 	/// Tries to simplify the given expression.
 	/// @returns its class if it possible or Id(-1) otherwise.
-	/// @param _secondRun is set to true for the second run where arguments of commutative expressions are reversed
-	Id tryToSimplify(Expression const& _expr, bool _secondRun = false);
+	Id tryToSimplify(Expression const& _expr);
 
 	/// Rebuilds an expression from a (matched) pattern.
 	Id rebuildExpression(ExpressionTemplate const& _template);

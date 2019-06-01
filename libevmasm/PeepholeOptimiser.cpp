@@ -19,7 +19,7 @@
  * Performs local optimising code changes to assembly.
  */
 
-#include "PeepholeOptimiser.h"
+#include <libevmasm/PeepholeOptimiser.h>
 
 #include <libevmasm/AssemblyItem.h>
 #include <libevmasm/SemanticInformation.h>
@@ -29,6 +29,9 @@ using namespace dev::eth;
 using namespace dev;
 
 // TODO: Extend this to use the tools from ExpressionClasses.cpp
+
+namespace
+{
 
 struct OptimiserState
 {
@@ -40,6 +43,14 @@ struct OptimiserState
 template <class Method, size_t Arguments>
 struct ApplyRule
 {
+};
+template <class Method>
+struct ApplyRule<Method, 4>
+{
+	static bool applyRule(AssemblyItems::const_iterator _in, std::back_insert_iterator<AssemblyItems> _out)
+	{
+		return Method::applySimple(_in[0], _in[1], _in[2], _in[3], _out);
+	}
 };
 template <class Method>
 struct ApplyRule<Method, 3>
@@ -151,6 +162,75 @@ struct DoublePush: SimplePeepholeOptimizerMethod<DoublePush, 2>
 	}
 };
 
+struct CommutativeSwap: SimplePeepholeOptimizerMethod<CommutativeSwap, 2>
+{
+	static bool applySimple(AssemblyItem const& _swap, AssemblyItem const& _op, std::back_insert_iterator<AssemblyItems> _out)
+	{
+		// Remove SWAP1 if following instruction is commutative
+		if (
+			_swap == Instruction::SWAP1 &&
+			SemanticInformation::isCommutativeOperation(_op)
+		)
+		{
+			*_out = _op;
+			return true;
+		}
+		else
+			return false;
+	}
+};
+
+struct SwapComparison: SimplePeepholeOptimizerMethod<SwapComparison, 2>
+{
+	static bool applySimple(AssemblyItem const& _swap, AssemblyItem const& _op, std::back_insert_iterator<AssemblyItems> _out)
+	{
+		static map<Instruction, Instruction> const swappableOps{
+			{ Instruction::LT, Instruction::GT },
+			{ Instruction::GT, Instruction::LT },
+			{ Instruction::SLT, Instruction::SGT },
+			{ Instruction::SGT, Instruction::SLT }
+		};
+
+		if (
+			_swap == Instruction::SWAP1 &&
+			_op.type() == Operation &&
+			swappableOps.count(_op.instruction())
+		)
+		{
+			*_out = swappableOps.at(_op.instruction());
+			return true;
+		}
+		else
+			return false;
+	}
+};
+
+struct IsZeroIsZeroJumpI: SimplePeepholeOptimizerMethod<IsZeroIsZeroJumpI, 4>
+{
+	static size_t applySimple(
+		AssemblyItem const& _iszero1,
+		AssemblyItem const& _iszero2,
+		AssemblyItem const& _pushTag,
+		AssemblyItem const& _jumpi,
+		std::back_insert_iterator<AssemblyItems> _out
+	)
+	{
+		if (
+			_iszero1 == Instruction::ISZERO &&
+			_iszero2 == Instruction::ISZERO &&
+			_pushTag.type() == PushTag &&
+			_jumpi == Instruction::JUMPI
+		)
+		{
+			*_out = _pushTag;
+			*_out = _jumpi;
+			return true;
+		}
+		else
+			return false;
+	}
+};
+
 struct JumpToNext: SimplePeepholeOptimizerMethod<JumpToNext, 3>
 {
 	static size_t applySimple(
@@ -201,6 +281,23 @@ struct TagConjunctions: SimplePeepholeOptimizerMethod<TagConjunctions, 3>
 	}
 };
 
+struct TruthyAnd: SimplePeepholeOptimizerMethod<TruthyAnd, 3>
+{
+	static bool applySimple(
+		AssemblyItem const& _push,
+		AssemblyItem const& _not,
+		AssemblyItem const& _and,
+		std::back_insert_iterator<AssemblyItems>
+	)
+	{
+		return (
+			_push.type() == Push && _push.data() == 0 &&
+			_not == Instruction::NOT &&
+			_and == Instruction::AND
+		);
+	}
+};
+
 /// Removes everything after a JUMP (or similar) until the next JUMPDEST.
 struct UnreachableCode
 {
@@ -246,14 +343,28 @@ void applyMethods(OptimiserState& _state, Method, OtherMethods... _other)
 		applyMethods(_state, _other...);
 }
 
+size_t numberOfPops(AssemblyItems const& _items)
+{
+	return std::count(_items.begin(), _items.end(), Instruction::POP);
+}
+
+}
+
 bool PeepholeOptimiser::optimise()
 {
 	OptimiserState state {m_items, 0, std::back_inserter(m_optimisedItems)};
 	while (state.i < m_items.size())
-		applyMethods(state, PushPop(), OpPop(), DoublePush(), DoubleSwap(), JumpToNext(), UnreachableCode(), TagConjunctions(), Identity());
+		applyMethods(
+			state,
+			PushPop(), OpPop(), DoublePush(), DoubleSwap(), CommutativeSwap(), SwapComparison(),
+			IsZeroIsZeroJumpI(), JumpToNext(), UnreachableCode(),
+			TagConjunctions(), TruthyAnd(), Identity()
+		);
 	if (m_optimisedItems.size() < m_items.size() || (
-		m_optimisedItems.size() == m_items.size() &&
-		eth::bytesRequired(m_optimisedItems, 3) < eth::bytesRequired(m_items, 3)
+		m_optimisedItems.size() == m_items.size() && (
+			eth::bytesRequired(m_optimisedItems, 3) < eth::bytesRequired(m_items, 3) ||
+			numberOfPops(m_optimisedItems) > numberOfPops(m_items)
+		)
 	))
 	{
 		m_items = std::move(m_optimisedItems);

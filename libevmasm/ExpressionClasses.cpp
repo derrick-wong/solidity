@@ -34,7 +34,7 @@
 using namespace std;
 using namespace dev;
 using namespace dev::eth;
-
+using namespace langutil;
 
 bool ExpressionClasses::Expression::operator<(ExpressionClasses::Expression const& _other) const
 {
@@ -181,9 +181,10 @@ string ExpressionClasses::fullDAGToString(ExpressionClasses::Id _id) const
 	return str.str();
 }
 
-ExpressionClasses::Id ExpressionClasses::tryToSimplify(Expression const& _expr, bool _secondRun)
+ExpressionClasses::Id ExpressionClasses::tryToSimplify(Expression const& _expr)
 {
 	static Rules rules;
+	assertThrow(rules.isInitialized(), OptimizerException, "Rule list not properly initialized.");
 
 	if (
 		!_expr.item ||
@@ -195,21 +196,17 @@ ExpressionClasses::Id ExpressionClasses::tryToSimplify(Expression const& _expr, 
 	if (auto match = rules.findFirstMatch(_expr, *this))
 	{
 		// Debug info
-		//cout << "Simplifying " << *_expr.item << "(";
-		//for (Id arg: _expr.arguments)
-		//	cout << fullDAGToString(arg) << ", ";
-		//cout << ")" << endl;
-		//cout << "with rule " << match->first.toString() << endl;
-		//ExpressionTemplate t(match->second());
-		//cout << "to " << match->second().toString() << endl;
-		return rebuildExpression(ExpressionTemplate(match->second(), _expr.item->location()));
-	}
+		if (false)
+		{
+			cout << "Simplifying " << *_expr.item << "(";
+			for (Id arg: _expr.arguments)
+				cout << fullDAGToString(arg) << ", ";
+			cout << ")" << endl;
+			cout << "with rule " << match->pattern.toString() << endl;
+			cout << "to " << match->action().toString() << endl;
+		}
 
-	if (!_secondRun && _expr.arguments.size() == 2 && SemanticInformation::isCommutativeOperation(*_expr.item))
-	{
-		Expression expr = _expr;
-		swap(expr.arguments[0], expr.arguments[1]);
-		return tryToSimplify(expr, true);
+		return rebuildExpression(ExpressionTemplate(match->action(), _expr.item->location()));
 	}
 
 	return -1;

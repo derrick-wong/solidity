@@ -3,23 +3,33 @@ cmake_minimum_required(VERSION 3.0.0)
 set(ETH_CMAKE_DIR   "${CMAKE_CURRENT_LIST_DIR}/cmake"   CACHE PATH "The the path to the cmake directory")
 list(APPEND CMAKE_MODULE_PATH ${ETH_CMAKE_DIR})
 
+include(EthToolchains)
+
 # Set cmake_policies
 include(EthPolicy)
 eth_policy()
 
 # project name and version should be set after cmake_policy CMP0048
-set(PROJECT_VERSION "0.4.12")
-project(solidity VERSION ${PROJECT_VERSION})
+set(PROJECT_VERSION "0.5.10")
+project(solidity VERSION ${PROJECT_VERSION} LANGUAGES CXX)
+
+option(LLL "Build LLL" OFF)
+option(SOLC_LINK_STATIC "Link solc executable statically on supported platforms" OFF)
+option(LLLC_LINK_STATIC "Link lllc executable statically on supported platforms" OFF)
+option(INSTALL_LLLC "Include lllc executable in installation" ${LLL})
+
+# Setup cccache.
+include(EthCcache)
 
 # Let's find our dependencies
 include(EthDependencies)
-include(deps/jsoncpp.cmake)
+include(jsoncpp)
+include_directories(SYSTEM ${JSONCPP_INCLUDE_DIR})
+
+find_package(Threads)
 
 # Figure out what compiler and system are we using
 include(EthCompilerSettings)
-
-# Include helper macros
-include(EthExecutableHelper)
 
 # Include utils
 include(EthUtils)
@@ -31,19 +41,24 @@ string(REGEX MATCHALL ".." LICENSE_TEXT "${LICENSE_TEXT}")
 string(REGEX REPLACE ";" ",\n\t0x" LICENSE_TEXT "${LICENSE_TEXT}")
 set(LICENSE_TEXT "0x${LICENSE_TEXT}")
 
-configure_file("${CMAKE_SOURCE_DIR}/cmake/templates/license.h.in" "license.h")
+configure_file("${CMAKE_SOURCE_DIR}/cmake/templates/license.h.in" include/license.h)
 
 include(EthOptions)
 configure_project(TESTS)
 
 add_subdirectory(libdevcore)
+add_subdirectory(liblangutil)
 add_subdirectory(libevmasm)
+add_subdirectory(libyul)
 add_subdirectory(libsolidity)
-add_subdirectory(solc)
+add_subdirectory(libsolc)
 
 if (NOT EMSCRIPTEN)
-	add_subdirectory(liblll)
-	add_subdirectory(lllc)
+	add_subdirectory(solc)
+	if (LLL)
+		add_subdirectory(liblll)
+		add_subdirectory(lllc)
+	endif()
 endif()
 
 if (TESTS AND NOT EMSCRIPTEN)

@@ -24,9 +24,17 @@
 #pragma once
 
 #include <libevmasm/ExpressionClasses.h>
+#include <libevmasm/SimplificationRule.h>
+
+#include <boost/noncopyable.hpp>
 
 #include <functional>
 #include <vector>
+
+namespace langutil
+{
+struct SourceLocation;
+}
 
 namespace dev
 {
@@ -47,19 +55,25 @@ public:
 
 	/// @returns a pointer to the first matching pattern and sets the match
 	/// groups accordingly.
-	std::pair<Pattern, std::function<Pattern()>> const* findFirstMatch(
+	SimplificationRule<Pattern> const* findFirstMatch(
 		Expression const& _expr,
 		ExpressionClasses const& _classes
 	);
 
+	/// Checks whether the rulelist is non-empty. This is usually enforced
+	/// by the constructor, but we had some issues with static initialization.
+	bool isInitialized() const;
+
 private:
-	void addRules(std::vector<std::pair<Pattern, std::function<Pattern()>>> const& _rules);
-	void addRule(std::pair<Pattern, std::function<Pattern()>> const& _rule);
+	void addRules(std::vector<SimplificationRule<Pattern>> const& _rules);
+	void addRule(SimplificationRule<Pattern> const& _rule);
 
 	void resetMatchGroups() { m_matchGroups.clear(); }
 
 	std::map<unsigned, Expression const*> m_matchGroups;
-	std::vector<std::pair<Pattern, std::function<Pattern()>>> m_rules[256];
+	/// Pattern to match, replacement to be applied and flag indicating whether
+	/// the replacement might remove some elements (except constants).
+	std::vector<SimplificationRule<Pattern>> m_rules[256];
 };
 
 /**
@@ -88,7 +102,7 @@ public:
 	unsigned matchGroup() const { return m_matchGroup; }
 	bool matches(Expression const& _expr, ExpressionClasses const& _classes) const;
 
-	AssemblyItem toAssemblyItem(SourceLocation const& _location) const;
+	AssemblyItem toAssemblyItem(langutil::SourceLocation const& _location) const;
 	std::vector<Pattern> arguments() const { return m_arguments; }
 
 	/// @returns the id of the matched expression if this pattern is part of a match group.
@@ -126,7 +140,7 @@ struct ExpressionTemplate
 {
 	using Expression = ExpressionClasses::Expression;
 	using Id = ExpressionClasses::Id;
-	explicit ExpressionTemplate(Pattern const& _pattern, SourceLocation const& _location);
+	explicit ExpressionTemplate(Pattern const& _pattern, langutil::SourceLocation const& _location);
 	std::string toString() const;
 	bool hasId = false;
 	/// Id of the matched expression, if available.

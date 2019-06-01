@@ -55,7 +55,7 @@ detect_linux_distro() {
         DISTRO=$(lsb_release -is)
     elif [ -f /etc/os-release ]; then
         # extract 'foo' from NAME=foo, only on the line with NAME=foo
-        DISTRO=$(sed -n -e 's/^NAME="\(.*\)\"/\1/p' /etc/os-release)
+        DISTRO=$(sed -n -e 's/^NAME="\?\([^"]*\)"\?$/\1/p' /etc/os-release)
     elif [ -f /etc/centos-release ]; then
         DISTRO=CentOS
     else
@@ -84,9 +84,15 @@ case $(uname -s) in
             10.12)
                 echo "Installing solidity dependencies on macOS 10.12 Sierra."
                 ;;
+            10.13)
+                echo "Installing solidity dependencies on macOS 10.13 High Sierra."
+                ;;
+            10.14)
+                echo "Installing solidity dependencies on macOS 10.14 Mojave."
+                ;;
             *)
                 echo "Unsupported macOS version."
-                echo "We only support Mavericks, Yosemite and El Capitan, with work-in-progress on Sierra."
+                echo "We only support Mavericks, Yosemite, El Capitan, Sierra, High Sierra and Mojave."
                 exit 1
                 ;;
         esac
@@ -115,7 +121,7 @@ case $(uname -s) in
         echo "Installing solidity dependencies on FreeBSD."
         echo "ERROR - 'install_deps.sh' doesn't have FreeBSD support yet."
         echo "Please let us know if you see this error message, and we can work out what is missing."
-        echo "Drop us a message at https://gitter.im/ethereum/solidity."
+        echo "Drop us a message at https://gitter.im/ethereum/solidity-dev."
         exit 1
         ;;
 
@@ -130,19 +136,18 @@ case $(uname -s) in
 # Arch Linux
 #------------------------------------------------------------------------------
 
-            Arch)
+            Arch*|ManjaroLinux)
                 #Arch
                 echo "Installing solidity dependencies on Arch Linux."
 
                 # All our dependencies can be found in the Arch Linux official repositories.
                 # See https://wiki.archlinux.org/index.php/Official_repositories
-                # Also adding ethereum-git to allow for testing with the `eth` client
-                sudo pacman -Sy \
+                sudo pacman -Syu \
                     base-devel \
                     boost \
                     cmake \
                     git \
-                    ethereum-git \
+                    cvc4
                 ;;
 
 #------------------------------------------------------------------------------
@@ -157,7 +162,7 @@ case $(uname -s) in
                 # See https://pkgs.alpinelinux.org/
 
                 apk update
-                apk add boost-dev build-base cmake
+                apk add boost-dev boost-static build-base cmake git
 
                 ;;
 
@@ -165,40 +170,41 @@ case $(uname -s) in
 # Debian
 #------------------------------------------------------------------------------
 
-            Debian)
+            Debian*)
                 #Debian
-                case $(lsb_release -cs) in
-                    wheezy)
+                . /etc/os-release
+                install_z3=""
+                case $VERSION_ID in
+                    7)
                         #wheezy
                         echo "Installing solidity dependencies on Debian Wheezy (7.x)."
                         echo "ERROR - 'install_deps.sh' doesn't have Debian Wheezy support yet."
                         echo "See http://solidity.readthedocs.io/en/latest/installing-solidity.html for manual instructions."
                         echo "If you would like to get 'install_deps.sh' working for Debian Wheezy, that would be fantastic."
-                        echo "Drop us a message at https://gitter.im/ethereum/solidity."
+                        echo "Drop us a message at https://gitter.im/ethereum/solidity-dev."
                         echo "See also https://github.com/ethereum/webthree-umbrella/issues/495 where we are working through Alpine support."
                         exit 1
                         ;;
-                    jessie)
+                    8)
                         #jessie
                         echo "Installing solidity dependencies on Debian Jesse (8.x)."
                         ;;
-                    stretch)
+                    9)
                         #stretch
                         echo "Installing solidity dependencies on Debian Stretch (9.x)."
-                        echo "ERROR - 'install_deps.sh' doesn't have Debian Stretch support yet."
-                        echo "See http://solidity.readthedocs.io/en/latest/installing-solidity.html for manual instructions."
-                        echo "If you would like to get 'install_deps.sh' working for Debian Stretch, that would be fantastic."
-                        echo "Drop us a message at https://gitter.im/ethereum/solidity."
-                        exit 1
+                        install_z3="libz3-dev"
+                        ;;
+                    10)
+                        #buster
+                        echo "Installing solidity dependencies on Debian Buster (10.x)."
+                        install_z3="libz3-dev"
                         ;;
                     *)
                         #other Debian
                         echo "Installing solidity dependencies on unknown Debian version."
-                        echo "ERROR - Debian Jessie is the only Debian version which solidity has been tested on."
-                        echo "If you are using a different release and would like to get 'install_deps.sh'"
-                        echo "working for that release that would be fantastic."
-                        echo "Drop us a message at https://gitter.im/ethereum/solidity."
-                        exit 1
+                        echo "ERROR - This might not work, but we are trying anyway."
+                        echo "Drop us a message at https://gitter.im/ethereum/solidity-dev"
+                        install_z3="libz3-dev"
                         ;;
                 esac
 
@@ -211,7 +217,9 @@ case $(uname -s) in
                     gcc \
                     git \
                     libboost-all-dev \
-                    unzip
+                    unzip \
+                    "$install_z3"
+
 
                 ;;
 
@@ -229,6 +237,7 @@ case $(uname -s) in
                     autoconf \
                     automake \
                     boost-devel \
+                    boost-static \
                     cmake \
                     gcc \
                     gcc-c++ \
@@ -250,59 +259,66 @@ case $(uname -s) in
                 echo "See https://github.com/ethereum/webthree-umbrella/issues/552."
                 exit 1
                 ;;
-
 #------------------------------------------------------------------------------
 # Ubuntu
 #
-# TODO - I wonder whether all of the Ubuntu-variants need some special
-# treatment?
-#
-# TODO - We should also test this code on Ubuntu Server, Ubuntu Snappy Core
-# and Ubuntu Phone.
-#
-# TODO - Our Ubuntu build is only working for amd64 and i386 processors.
-# It would be good to add armel, armhf and arm64.
-# See https://github.com/ethereum/webthree-umbrella/issues/228.
 #------------------------------------------------------------------------------
 
-            Ubuntu)
+            Ubuntu|LinuxMint)
+                #LinuxMint is a distro on top of Ubuntu.
                 #Ubuntu
+                install_z3=""
                 case $(lsb_release -cs) in
-                    trusty)
-                        #trusty
+                    trusty|qiana|rebecca|rafaela|rosa)
                         echo "Installing solidity dependencies on Ubuntu Trusty Tahr (14.04)."
+                        echo "Or, you may also be running Linux Mint Qiana / Rebecca / Rafaela / Rosa (base: Ubuntu Trusty Tahr (14.04).)"
                         ;;
                     utopic)
-                        #utopic
                         echo "Installing solidity dependencies on Ubuntu Utopic Unicorn (14.10)."
                         ;;
                     vivid)
-                        #vivid
                         echo "Installing solidity dependencies on Ubuntu Vivid Vervet (15.04)."
                         ;;
                     wily)
-                        #wily
                         echo "Installing solidity dependencies on Ubuntu Wily Werewolf (15.10)."
                         ;;
-                    xenial)
-                        #xenial
+                    xenial|sarah|serena|sonya|sylvia)
                         echo "Installing solidity dependencies on Ubuntu Xenial Xerus (16.04)."
+                        echo "Or, you may also be running Linux Mint Sarah / Serena / Sonya / Sylvia (base: Ubuntu Xenial Xerus (16.04).)"
+                        install_z3="libz3-dev"
                         ;;
                     yakkety)
-                        #yakkety
                         echo "Installing solidity dependencies on Ubuntu Yakkety Yak (16.10)."
-                        echo ""
-                        echo "NOTE - You are in unknown territory with this preview OS."
-                        echo "We will need to update the Ethereum PPAs, work through build and runtime breaks, etc."
-                        echo "See https://github.com/ethereum/webthree-umbrella/issues/624."
-                        echo "If you would like to partner with us to work through these, that"
-                        echo "would be fantastic.  Please just comment on that issue.  Thanks!"
+                        install_z3="libz3-dev"
+                        ;;
+                    zesty)
+                        echo "Installing solidity dependencies on Ubuntu Zesty (17.04)."
+                        install_z3="libz3-dev"
+                        ;;
+                    artful)
+                        echo "Installing solidity dependencies on Ubuntu Artful (17.10)."
+                        install_z3="libz3-dev"
+                        ;;
+                    bionic)
+                        echo "Installing solidity dependencies on Ubuntu Bionic (18.04)."
+                        install_z3="libz3-dev"
+                        ;;
+                    betsy)
+                        #do not try anything for betsy.
+                        echo "Linux Mint Betsy is not supported at the moment as it runs off of Debian."
+                        echo "We only support Sylvia, Sonya, Serena, Sarah, Rosa, Rafaela, Rebecca, and Qiana."
+                        echo "See http://solidity.readthedocs.io/en/latest/installing-solidity.html for manual instructions."
+                        echo "If you would like to get your distro working, that would be fantastic."
+                        echo "Drop us a message at https://gitter.im/ethereum/solidity-dev."
+                        exit 1
                         ;;
                     *)
                         #other Ubuntu
                         echo "ERROR - Unknown or unsupported Ubuntu version (" $(lsb_release -cs) ")"
-                        echo "We only support Trusty, Utopic, Vivid, Wily and Xenial, with work-in-progress on Yakkety."
-                        exit 1
+                        echo "ERROR - This might not work, but we are trying anyway."
+                        echo "Please drop us a message at https://gitter.im/ethereum/solidity-dev."
+                        echo "We only support Trusty, Utopic, Vivid, Wily, Xenial, Yakkety, Zesty, Artful and Bionic."
+                        install_z3="libz3-dev"
                         ;;
                 esac
 
@@ -311,8 +327,17 @@ case $(uname -s) in
                     build-essential \
                     cmake \
                     git \
-                    libboost-all-dev
+                    libboost-all-dev \
+                    "$install_z3"
                 if [ "$CI" = true ]; then
+                    # install Z3 from PPA if the distribution does not provide it
+                    if ! dpkg -l libz3-dev > /dev/null 2>&1
+                    then
+                        sudo apt-add-repository -y ppa:hvr/z3
+                        sudo apt-get -y update
+                        sudo apt-get -y install libz3-dev
+                    fi
+
                     # Install 'eth', for use in the Solidity Tests-over-IPC.
                     # We will not use this 'eth', but its dependencies
                     sudo add-apt-repository -y ppa:ethereum/ethereum
@@ -327,13 +352,14 @@ case $(uname -s) in
 # CentOS needs some more testing. This is the general idea of packages
 # needed, but some tweaking/improvements can definitely happen
 #------------------------------------------------------------------------------
-            CentOS)
+            CentOS*)
+                echo "Attention: CentOS 7 is currently not supported!";
                 read -p "This script will heavily modify your system in order to allow for compilation of Solidity. Are you sure? [Y/N]" -n 1 -r
                 if [[ $REPLY =~ ^[Yy]$ ]]; then
                     # Make Sure we have the EPEL repos
                     sudo yum -y install epel-release
                     # Get g++ 4.8
-                    sudo rpm --import http://ftp.scientificlinux.org/linux/scientific/5x/x86_64/RPM-GPG-KEYs/RPM-GPG-KEY-cern
+                    sudo rpm --import http://linuxsoft.cern.ch/cern/slc6X/i386/RPM-GPG-KEY-cern
                     wget -O /etc/yum.repos.d/slc6-devtoolset.repo http://linuxsoft.cern.ch/cern/devtoolset/slc6-devtoolset.repo
                     sudo yum -y install devtoolset-2-gcc devtoolset-2-gcc-c++ devtoolset-2-binutils
 
@@ -351,7 +377,7 @@ case $(uname -s) in
 
                     # Get latest boost thanks to this guy: http://vicendominguez.blogspot.de/2014/04/boost-c-library-rpm-packages-for-centos.html
                     sudo yum -y remove boost-devel
-                    sudo wget http://repo.enetres.net/enetres.repo -O /etc/yum.repos.d/enetres.repo
+                    sudo wget https://bintray.com/vicendominguez/CentOS6/rpm -O /etc/yum.repos.d/bintray-vicendominguez-CentOS6.repo
                     sudo yum install boost-devel
                 else
                     echo "Aborted CentOS Solidity Dependency Installation";
@@ -375,7 +401,7 @@ case $(uname -s) in
                 echo "ERROR - Unsupported or unidentified Linux distro."
                 echo "See http://solidity.readthedocs.io/en/latest/installing-solidity.html for manual instructions."
                 echo "If you would like to get your distro working, that would be fantastic."
-                echo "Drop us a message at https://gitter.im/ethereum/solidity."
+                echo "Drop us a message at https://gitter.im/ethereum/solidity-dev."
                 exit 1
                 ;;
         esac
@@ -392,6 +418,6 @@ case $(uname -s) in
         echo "ERROR - Unsupported or unidentified operating system."
         echo "See http://solidity.readthedocs.io/en/latest/installing-solidity.html for manual instructions."
         echo "If you would like to get your operating system working, that would be fantastic."
-        echo "Drop us a message at https://gitter.im/ethereum/solidity."
+        echo "Drop us a message at https://gitter.im/ethereum/solidity-dev."
         ;;
 esac

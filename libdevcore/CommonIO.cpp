@@ -19,24 +19,29 @@
  * @date 2014
  */
 
-#include "CommonIO.h"
+#include <libdevcore/CommonIO.h>
+#include <libdevcore/Assertions.h>
+
+#include <boost/filesystem.hpp>
+
 #include <iostream>
 #include <cstdlib>
 #include <fstream>
-#include <stdio.h>
 #if defined(_WIN32)
 #include <windows.h>
 #else
+#include <unistd.h>
 #include <termios.h>
 #endif
-#include <boost/filesystem.hpp>
-#include "Assertions.h"
 
 using namespace std;
 using namespace dev;
 
+namespace
+{
+
 template <typename _T>
-inline _T contentsGeneric(std::string const& _file)
+inline _T readFile(std::string const& _file)
 {
 	_T ret;
 	size_t const c_elementSize = sizeof(typename _T::value_type);
@@ -56,46 +61,91 @@ inline _T contentsGeneric(std::string const& _file)
 	return ret;
 }
 
-string dev::contentsString(string const& _file)
-{
-	return contentsGeneric<string>(_file);
 }
 
-void dev::writeFile(std::string const& _file, bytesConstRef _data, bool _writeDeleteRename)
+string dev::readFileAsString(string const& _file)
 {
-	namespace fs = boost::filesystem;
-	if (_writeDeleteRename)
-	{
-		fs::path tempPath = fs::unique_path(_file + "-%%%%%%");
-		writeFile(tempPath.string(), _data, false);
-		// will delete _file if it exists
-		fs::rename(tempPath, _file);
-	}
-	else
-	{
-		// create directory if not existent
-		fs::path p(_file);
-		if (!fs::exists(p.parent_path()))
-		{
-			fs::create_directories(p.parent_path());
-			try
-			{
-				fs::permissions(p.parent_path(), fs::owner_all);
-			}
-			catch (...)
-			{
-			}
-		}
+	return readFile<string>(_file);
+}
 
-		ofstream s(_file, ios::trunc | ios::binary);
-		s.write(reinterpret_cast<char const*>(_data.data()), _data.size());
-		assertThrow(s, FileError, "Could not write to file: " + _file);
-		try
-		{
-			fs::permissions(_file, fs::owner_read|fs::owner_write);
-		}
-		catch (...)
-		{
-		}
+string dev::readStandardInput()
+{
+	string ret;
+	while (!cin.eof())
+	{
+		string tmp;
+		// NOTE: this will read until EOF or NL
+		getline(cin, tmp);
+		ret.append(tmp);
+		ret.append("\n");
 	}
+	return ret;
+}
+
+#if defined(_WIN32)
+class DisableConsoleBuffering
+{
+public:
+	DisableConsoleBuffering()
+	{
+		m_stdin = GetStdHandle(STD_INPUT_HANDLE);
+		GetConsoleMode(m_stdin, &m_oldMode);
+		SetConsoleMode(m_stdin, m_oldMode & (~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT)));
+	}
+	~DisableConsoleBuffering()
+	{
+		SetConsoleMode(m_stdin, m_oldMode);
+	}
+private:
+	HANDLE m_stdin;
+	DWORD m_oldMode;
+};
+#else
+class DisableConsoleBuffering
+{
+public:
+	DisableConsoleBuffering()
+	{
+		tcgetattr(0, &m_termios);
+		m_termios.c_lflag &= ~ICANON;
+		m_termios.c_lflag &= ~ECHO;
+		m_termios.c_cc[VMIN] = 1;
+		m_termios.c_cc[VTIME] = 0;
+		tcsetattr(0, TCSANOW, &m_termios);
+	}
+	~DisableConsoleBuffering()
+	{
+		m_termios.c_lflag |= ICANON;
+		m_termios.c_lflag |= ECHO;
+		tcsetattr(0, TCSADRAIN, &m_termios);
+	}
+private:
+	struct termios m_termios;
+};
+#endif
+
+int dev::readStandardInputChar()
+{
+	DisableConsoleBuffering disableConsoleBuffering;
+	return cin.get();
+}
+
+string dev::absolutePath(string const& _path, string const& _reference)
+{
+	boost::filesystem::path p(_path);
+	// Anything that does not start with `.` is an absolute path.
+	if (p.begin() == p.end() || (*p.begin() != "." && *p.begin() != ".."))
+		return _path;
+	boost::filesystem::path result(_reference);
+	result.remove_filename();
+	for (boost::filesystem::path::iterator it = p.begin(); it != p.end(); ++it)
+		if (*it == "..")
+			result = result.parent_path();
+		else if (*it != ".")
+			result /= *it;
+	return result.generic_string();
+}
+
+string dev::sanitizePath(string const& _path) {
+	return boost::filesystem::path(_path).generic_string();
 }
